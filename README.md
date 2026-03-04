@@ -54,8 +54,9 @@ open http://127.0.0.1:8765/
 ```
 
 3. Refresh the page.
-   - On refresh, `index.html` calls `/recalc` on the same localhost server
-   - The service rewrites dashboard stats/table and the page reloads with fresh values
+   - On refresh, the dashboard calls `/recalc` on the same localhost server
+   - By default, the service rewrites `tmp/index.runtime.html` (untracked), so git-tracked `dashboard/index.html` stays unchanged
+   - The page reloads with fresh values after recalc completes
 
 ## Configuration
 
@@ -65,7 +66,7 @@ Environment variables:
 - `CODEX_USAGE_SERVER_PORT` (default: `8765`)
 - `CODEX_USAGE_SESSIONS_ROOT` (default: `~/.codex/sessions`)
 - `CODEX_USAGE_CLAUDE_PROJECTS_ROOT` (default: `~/.claude/projects`)
-- `CODEX_USAGE_DASHBOARD_HTML` (default: `<repo>/dashboard/index.html`)
+- `CODEX_USAGE_DASHBOARD_HTML` (default via `scripts/run_local.sh`: `<repo>/tmp/index.runtime.html`, seeded from `<repo>/dashboard/index.html`)
 
 ## Optional: Run as LaunchAgent (macOS)
 
