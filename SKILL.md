@@ -15,7 +15,11 @@ Use this skill to maintain a local token-usage dashboard that:
 
 Primary files:
 - `dashboard/index.html`: dashboard UI and client-side behavior
-- `scripts/codex_usage_recalc_server.py`: `/health`, `/recalc`, and HTML rewrite logic
+- `scripts/codex_usage_recalc_server.py`: `/health` and `/recalc` HTTP entrypoint
+- `scripts/dashboard_core/pipeline.py`: recalc orchestration logic
+- `scripts/dashboard_core/collectors.py`: provider ingestion
+- `scripts/dashboard_core/aggregation.py`: date windows and summaries
+- `scripts/dashboard_core/render.py`: HTML rewrite and embedded dataset output
 - `scripts/run_local.sh`: local launcher
 
 ## Quick Commands

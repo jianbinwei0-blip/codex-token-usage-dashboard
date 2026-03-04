@@ -19,9 +19,16 @@ Currently supports Codex and Claude.
 ## Project Structure
 
 - `dashboard/index.html`: Dashboard UI
-- `scripts/codex_usage_recalc_server.py`: Local HTTP recalc service (`/health`, `/recalc`)
+- `scripts/codex_usage_recalc_server.py`: Thin local HTTP recalc service (`/health`, `/recalc`)
+- `scripts/dashboard_core/config.py`: Runtime config/env resolution
+- `scripts/dashboard_core/collectors.py`: Codex/Claude usage ingestion
+- `scripts/dashboard_core/aggregation.py`: Daily aggregation + date window logic
+- `scripts/dashboard_core/render.py`: HTML rewrite + dataset injection
+- `scripts/dashboard_core/pipeline.py`: End-to-end recalc orchestration
 - `scripts/run_local.sh`: Convenience launcher for local development
+- `scripts/tests/test_harness_contracts.py`: Deterministic pipeline/harness invariants
 - `launchd/*.plist.example`: Optional macOS LaunchAgent template
+- `docs/harness-engineering-adoption.md`: Harness-engineering rationale + validation loop
 
 ## Requirements
 
@@ -90,6 +97,14 @@ curl http://127.0.0.1:8765/health
 - Claude request usage is deduplicated by `(sessionId, requestId)` and keeps the highest observed `output_tokens` for the request.
 - Claude total token metric is computed as `input_tokens + cache_creation_input_tokens + cache_read_input_tokens + output_tokens`.
 - No third-party services are required.
+
+## Validation
+
+Run the full local harness checks:
+
+```bash
+python3 -m unittest scripts.tests.test_usage_aggregation scripts.tests.test_harness_contracts
+```
 
 ## Use as a Codex Skill
 
