@@ -31,6 +31,7 @@ DASHBOARD_HTML = CONFIG.dashboard_html
 SESSIONS_ROOT = CONFIG.sessions_root
 CLAUDE_PROJECTS_ROOT = CONFIG.claude_projects_root
 PI_AGENT_ROOT = CONFIG.pi_agent_root
+PRICING_FILE = CONFIG.pricing_file
 
 
 # Compatibility helpers used by local tests and existing workflows.
@@ -134,6 +135,7 @@ class Handler(BaseHTTPRequestHandler):
                     "sessions_root": str(SESSIONS_ROOT),
                     "claude_projects_root": str(CLAUDE_PROJECTS_ROOT),
                     "pi_agent_root": str(PI_AGENT_ROOT),
+                    "pricing_file": str(PRICING_FILE) if PRICING_FILE else None,
                     "providers_available": providers_available(
                         SESSIONS_ROOT.exists(),
                         CLAUDE_PROJECTS_ROOT.exists(),

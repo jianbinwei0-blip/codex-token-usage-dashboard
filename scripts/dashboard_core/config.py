@@ -13,9 +13,11 @@ class DashboardConfig:
     sessions_root: Path
     claude_projects_root: Path
     pi_agent_root: Path
+    pricing_file: Path | None = None
 
     @classmethod
     def from_env(cls, repo_root: Path) -> "DashboardConfig":
+        pricing_file_value = os.environ.get("AI_USAGE_PRICING_FILE")
         return cls(
             host=os.environ.get("AI_USAGE_SERVER_HOST", "127.0.0.1"),
             port=int(os.environ.get("AI_USAGE_SERVER_PORT", "8765")),
@@ -43,4 +45,5 @@ class DashboardConfig:
                     str(Path.home() / ".pi" / "agent"),
                 )
             ),
+            pricing_file=Path(pricing_file_value) if pricing_file_value else None,
         )

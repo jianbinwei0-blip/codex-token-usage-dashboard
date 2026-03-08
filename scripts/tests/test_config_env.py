@@ -21,6 +21,7 @@ class DashboardConfigEnvTests(unittest.TestCase):
                 "AI_USAGE_CODEX_SESSIONS_ROOT": "/tmp/ai-dashboard/codex",
                 "AI_USAGE_CLAUDE_PROJECTS_ROOT": "/tmp/ai-dashboard/claude",
                 "AI_USAGE_PI_AGENT_ROOT": "/tmp/ai-dashboard/pi-agent",
+                "AI_USAGE_PRICING_FILE": "/tmp/ai-dashboard/pricing.json",
             },
             clear=True,
         ):
@@ -32,6 +33,7 @@ class DashboardConfigEnvTests(unittest.TestCase):
         self.assertEqual(cfg.sessions_root, Path("/tmp/ai-dashboard/codex"))
         self.assertEqual(cfg.claude_projects_root, Path("/tmp/ai-dashboard/claude"))
         self.assertEqual(cfg.pi_agent_root, Path("/tmp/ai-dashboard/pi-agent"))
+        self.assertEqual(cfg.pricing_file, Path("/tmp/ai-dashboard/pricing.json"))
 
     def test_uses_defaults_when_env_is_unset(self) -> None:
         repo_root = Path("/tmp/repo")
@@ -44,6 +46,7 @@ class DashboardConfigEnvTests(unittest.TestCase):
         self.assertEqual(cfg.sessions_root, Path.home() / ".codex" / "sessions")
         self.assertEqual(cfg.claude_projects_root, Path.home() / ".claude" / "projects")
         self.assertEqual(cfg.pi_agent_root, Path.home() / ".pi" / "agent")
+        self.assertIsNone(cfg.pricing_file)
 
 
 if __name__ == "__main__":

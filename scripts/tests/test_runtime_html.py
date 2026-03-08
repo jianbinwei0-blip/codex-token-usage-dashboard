@@ -33,7 +33,7 @@ class RuntimeHtmlTests(unittest.TestCase):
 
             self.assertEqual(runtime_html.read_text(encoding="utf-8"), "new-template-currentWeekEnd=today")
 
-    def test_dashboard_groups_refresh_chips_and_uses_untruncated_refresh_copy(self) -> None:
+    def test_dashboard_groups_refresh_chips_and_exposes_breakdown_headers(self) -> None:
         dashboard_html = Path(__file__).resolve().parents[2] / "dashboard" / "index.html"
         html = dashboard_html.read_text(encoding="utf-8")
 
@@ -53,6 +53,19 @@ class RuntimeHtmlTests(unittest.TestCase):
             html,
             r"\.meta-row--refresh \.chip \{\s*flex: 0 0 auto;\s*max-width: none;\s*white-space: nowrap;\s*overflow: visible;\s*text-overflow: clip;",
         )
+        self.assertIn("YTD Input Tokens", html)
+        self.assertIn("YTD Output Tokens", html)
+        self.assertIn("YTD Cached Tokens", html)
+        self.assertIn("YTD Total Cost", html)
+        self.assertIn("YTD Input Cost", html)
+        self.assertIn("YTD Cached Cost", html)
+        self.assertIn("Agent CLI + Model Breakdown", html)
+        self.assertIn('id="dailyUsageTableBody"', html)
+        self.assertIn('id="usageBreakdownTableBody"', html)
+        self.assertIn('>Input</th>', html)
+        self.assertIn('>Cached</th>', html)
+        self.assertIn('>Total Cost</th>', html)
+        self.assertIn('const pricingMetadata = usageDataset?.pricing || {};', html)
 
 
 if __name__ == "__main__":

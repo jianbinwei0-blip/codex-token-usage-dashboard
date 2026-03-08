@@ -10,9 +10,10 @@ Supports Codex, Claude, and PI Coding Agent.
 ## Features
 
 - Provider toggle filtered to providers present on the system (`Combined`, `Codex`, `Claude`, `PI`)
-- YTD stats cards (`YTD total`, `days`, `sessions`, `highest day`)
+- Range-aware stats cards for total, days, sessions, highest day, explicit input/output/cached token totals, and cost totals
 - Today + calendar-week rollups
-- Daily breakdown table sorted by highest total tokens
+- Daily breakdown table with sessions, input, output, cached, total token, and total cost columns
+- Range-scoped breakdown table grouped by `Agent CLI` + `Model`, including cost totals
 - Horizontal bar chart (with rank, total tokens, and session count) above the table
 - Auto-recalc on browser refresh and every 5 minutes via local `localhost` endpoint
 
@@ -25,6 +26,7 @@ Supports Codex, Claude, and PI Coding Agent.
 - `scripts/dashboard_core/aggregation.py`: Daily aggregation + date window logic
 - `scripts/dashboard_core/render.py`: HTML rewrite + dataset injection
 - `scripts/dashboard_core/pipeline.py`: End-to-end recalc orchestration
+- `scripts/dashboard_core/pricing.py`: Built-in rate card + optional pricing override loader
 - `scripts/run_local.sh`: Convenience launcher for local development
 - `scripts/tests/test_harness_contracts.py`: Deterministic pipeline/harness invariants
 - `launchd/*.plist.example`: Optional macOS LaunchAgent template
@@ -69,6 +71,7 @@ Environment variables:
 - `AI_USAGE_CLAUDE_PROJECTS_ROOT` (default: `~/.claude/projects`)
 - `AI_USAGE_PI_AGENT_ROOT` (default: `~/.pi/agent`)
 - `AI_USAGE_DASHBOARD_HTML` (default via `scripts/run_local.sh`: `<repo>/tmp/index.runtime.html`, seeded from `<repo>/dashboard/index.html`)
+- `AI_USAGE_PRICING_FILE` (optional JSON rate-card override file merged over the built-in pricing table)
 
 ## Optional: Run as LaunchAgent (macOS)
 
@@ -97,9 +100,12 @@ curl http://127.0.0.1:8765/health
 ## Notes
 
 - The dashboard is designed for local use and reads local AI provider session logs from Codex, Claude, and PI when present.
-- Claude request usage is deduplicated by `(sessionId, requestId)` and keeps the highest observed `output_tokens` for the request.
-- Claude total token metric is computed as `input_tokens + cache_creation_input_tokens + cache_read_input_tokens + output_tokens`.
-- PI usage is read from `~/.pi/agent/sessions/**/*.jsonl` and sums assistant `usage.totalTokens` while counting unique session IDs per day.
+- Daily rows in the injected dataset include `sessions`, `input_tokens`, `output_tokens`, `cached_tokens`, `total_tokens`, `input_cost_usd`, `output_cost_usd`, `cached_cost_usd`, `total_cost_usd`, `cost_complete`, and `breakdown_rows` grouped by `(agent_cli, model)`.
+- A built-in versioned pricing table is used for derived Codex and Claude costs, and can be overridden via `AI_USAGE_PRICING_FILE`.
+- Codex usage keeps the latest `token_count` snapshot per session, extracts `originator`/`source` for the CLI bucket, uses the latest observed `turn_context.payload.model` when present, and prices uncached input separately from cached tokens.
+- Claude request usage is deduplicated by `(sessionId, requestId)`, keeps the highest observed token values for the request, computes `cached_tokens = cache_creation_input_tokens + cache_read_input_tokens`, and derives cost from the model rate card.
+- PI usage is read from `~/.pi/agent/sessions/**/*.jsonl`, tracks the active model via `model_change` events, computes `cached_tokens = cacheRead + cacheWrite`, and prefers native `message.usage.cost.*` when present.
+- Unmapped provider/model pricing is surfaced as partial cost in the API/UI instead of silently treated as trusted zero cost.
 - No third-party services are required.
 
 ## Validation

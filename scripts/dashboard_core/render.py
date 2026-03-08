@@ -4,11 +4,20 @@ import datetime as dt
 import json
 import re
 
-from .models import DailyTotals
-
 
 def format_number(value: int) -> str:
     return f"{value:,}"
+
+
+def format_usd(value: float) -> str:
+    if value < 1:
+        return f"${value:,.4f}"
+    return f"${value:,.2f}"
+
+
+def format_cost_display(value: float, cost_complete: bool) -> str:
+    rendered = format_usd(value)
+    return rendered if cost_complete else f"{rendered} (partial)"
 
 
 def build_stats_section(
@@ -18,6 +27,14 @@ def build_stats_section(
     days_count: int,
     sessions_total: int,
     highest: int,
+    input_total: int,
+    output_total: int,
+    cached_total: int,
+    total_cost: float,
+    input_cost_total: float,
+    output_cost_total: float,
+    cached_cost_total: float,
+    cost_complete: bool,
     today_sessions: int,
     today_total: int,
     current_monday: dt.date,
@@ -51,6 +68,34 @@ def build_stats_section(
         <div class=\"value\">{format_number(highest)}</div>
       </article>
       <article class=\"stat\">
+        <div class=\"label\">YTD Input Tokens</div>
+        <div class=\"value\">{format_number(input_total)}</div>
+      </article>
+      <article class=\"stat\">
+        <div class=\"label\">YTD Output Tokens</div>
+        <div class=\"value\">{format_number(output_total)}</div>
+      </article>
+      <article class=\"stat\">
+        <div class=\"label\">YTD Cached Tokens</div>
+        <div class=\"value\">{format_number(cached_total)}</div>
+      </article>
+      <article class=\"stat\">
+        <div class=\"label\">YTD Total Cost</div>
+        <div class=\"value\">{format_cost_display(total_cost, cost_complete)}</div>
+      </article>
+      <article class=\"stat\">
+        <div class=\"label\">YTD Input Cost</div>
+        <div class=\"value\">{format_cost_display(input_cost_total, cost_complete)}</div>
+      </article>
+      <article class=\"stat\">
+        <div class=\"label\">YTD Output Cost</div>
+        <div class=\"value\">{format_cost_display(output_cost_total, cost_complete)}</div>
+      </article>
+      <article class=\"stat\">
+        <div class=\"label\">YTD Cached Cost</div>
+        <div class=\"value\">{format_cost_display(cached_cost_total, cost_complete)}</div>
+      </article>
+      <article class=\"stat\">
         <div class=\"label\">Today ({today.isoformat()}, {today_sessions} sessions)</div>
         <div class=\"value\">{format_number(today_total)}</div>
       </article>
@@ -69,15 +114,37 @@ def build_stats_section(
     </section>"""
 
 
-def build_table_body(rows: list[DailyTotals]) -> str:
+def build_table_body(rows: list[object]) -> str:
     row_lines = []
     for idx, item in enumerate(rows, start=1):
         rank_class = " top-3" if idx <= 3 else ""
         row_lines.append(
             f'            <tr><td><span class="rank{rank_class}">{idx}</span></td><td>{item.date.isoformat()}</td>'
-            f'<td class="num">{item.sessions}</td><td class="num total-col">{format_number(item.total_tokens)}</td></tr>'
+            f'<td class="num">{item.sessions}</td><td class="num">{format_number(item.input_tokens)}</td>'
+            f'<td class="num">{format_number(item.output_tokens)}</td><td class="num">{format_number(item.cached_tokens)}</td>'
+            f'<td class="num">{format_number(item.total_tokens)}</td><td class="num total-col">{format_cost_display(item.total_cost_usd, item.cost_complete)}</td></tr>'
         )
-    return "          <tbody>\n" + "\n".join(row_lines) + "\n          </tbody>"
+    return "<tbody id=\"dailyUsageTableBody\">\n" + "\n".join(row_lines) + "\n          </tbody>"
+
+
+def build_breakdown_table_body(rows: list[dict[str, int | float | str | bool]]) -> str:
+    row_lines = []
+    for idx, item in enumerate(rows, start=1):
+        rank_class = " top-3" if idx <= 3 else ""
+        row_lines.append(
+            "            <tr>"
+            f'<td><span class="rank{rank_class}">{idx}</span></td>'
+            f'<td>{item["agent_cli"]}</td>'
+            f'<td>{item["model"]}</td>'
+            f'<td class="num">{item["sessions"]}</td>'
+            f'<td class="num">{format_number(int(item["input_tokens"]))}</td>'
+            f'<td class="num">{format_number(int(item["output_tokens"]))}</td>'
+            f'<td class="num">{format_number(int(item["cached_tokens"]))}</td>'
+            f'<td class="num">{format_number(int(item["total_tokens"]))}</td>'
+            f'<td class="num total-col">{format_cost_display(float(item["total_cost_usd"]), bool(item["cost_complete"]))}</td>'
+            "</tr>"
+        )
+    return "<tbody id=\"usageBreakdownTableBody\">\n" + "\n".join(row_lines) + "\n          </tbody>"
 
 
 def inject_usage_dataset(html: str, dataset: dict) -> str:
@@ -134,7 +201,7 @@ def rewrite_provider_select(html: str, dataset: dict) -> str:
     )
 
 
-def rewrite_dashboard_html(html: str, stats_section: str, table_body: str, dataset: dict) -> str:
+def rewrite_dashboard_html(html: str, stats_section: str, table_body: str, breakdown_body: str, dataset: dict) -> str:
     updated = re.sub(
         r"^[ \t]*<section class=\"stats\">.*?</section>",
         stats_section,
@@ -143,11 +210,18 @@ def rewrite_dashboard_html(html: str, stats_section: str, table_body: str, datas
         flags=re.DOTALL | re.MULTILINE,
     )
     updated = re.sub(
-        r"^[ \t]*<tbody>\s*.*?\s*</tbody>",
+        r"<tbody id=\"dailyUsageTableBody\">.*?</tbody>",
         table_body,
         updated,
         count=1,
-        flags=re.DOTALL | re.MULTILINE,
+        flags=re.DOTALL,
+    )
+    updated = re.sub(
+        r"<tbody id=\"usageBreakdownTableBody\">.*?</tbody>",
+        breakdown_body,
+        updated,
+        count=1,
+        flags=re.DOTALL,
     )
     updated = rewrite_provider_select(updated, dataset)
     return inject_usage_dataset(updated, dataset)

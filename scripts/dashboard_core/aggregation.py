@@ -2,7 +2,37 @@ from __future__ import annotations
 
 import datetime as dt
 
-from .models import DailyTotals
+from .models import BreakdownTotals, DailyTotals, round_cost
+
+
+def serialize_breakdown_rows(breakdowns: dict[tuple[str, str], BreakdownTotals]) -> list[dict[str, int | float | str | bool]]:
+    rows = [
+        {
+            "agent_cli": bucket.agent_cli,
+            "model": bucket.model,
+            "sessions": bucket.sessions,
+            "input_tokens": bucket.input_tokens,
+            "output_tokens": bucket.output_tokens,
+            "cached_tokens": bucket.cached_tokens,
+            "total_tokens": bucket.total_tokens,
+            "input_cost_usd": bucket.input_cost_usd,
+            "output_cost_usd": bucket.output_cost_usd,
+            "cached_cost_usd": bucket.cached_cost_usd,
+            "total_cost_usd": bucket.total_cost_usd,
+            "cost_complete": bucket.cost_complete,
+            "cost_status": bucket.cost_status,
+        }
+        for bucket in breakdowns.values()
+    ]
+    rows.sort(
+        key=lambda row: (
+            -int(row["total_tokens"]),
+            -int(row["sessions"]),
+            str(row["agent_cli"]),
+            str(row["model"]),
+        )
+    )
+    return rows
 
 
 def combine_daily_totals(*providers: dict[dt.date, DailyTotals]) -> dict[dt.date, DailyTotals]:
@@ -11,8 +41,7 @@ def combine_daily_totals(*providers: dict[dt.date, DailyTotals]) -> dict[dt.date
     for provider in providers:
         for usage_date, values in provider.items():
             daily = combined.setdefault(usage_date, DailyTotals(date=usage_date))
-            daily.sessions += values.sessions
-            daily.total_tokens += values.total_tokens
+            daily.merge_from(values)
 
     return combined
 
@@ -41,25 +70,70 @@ def slice_daily(daily: dict[dt.date, DailyTotals], from_date: dt.date, to_date: 
     }
 
 
-def rows_from_daily(daily: dict[dt.date, DailyTotals]) -> list[dict[str, int | str]]:
-    rows = []
+def rows_from_daily(
+    daily: dict[dt.date, DailyTotals],
+) -> list[dict[str, int | float | str | bool | list[dict[str, int | float | str | bool]]]]:
+    rows: list[dict[str, int | float | str | bool | list[dict[str, int | float | str | bool]]]] = []
     for usage_date, values in daily.items():
         rows.append(
             {
                 "date": usage_date.isoformat(),
                 "sessions": values.sessions,
+                "input_tokens": values.input_tokens,
+                "output_tokens": values.output_tokens,
+                "cached_tokens": values.cached_tokens,
                 "total_tokens": values.total_tokens,
+                "input_cost_usd": values.input_cost_usd,
+                "output_cost_usd": values.output_cost_usd,
+                "cached_cost_usd": values.cached_cost_usd,
+                "total_cost_usd": values.total_cost_usd,
+                "cost_complete": values.cost_complete,
+                "cost_status": values.cost_status,
+                "breakdown_rows": serialize_breakdown_rows(values.breakdowns),
             }
         )
-    rows.sort(key=lambda row: row["date"], reverse=True)
+    rows.sort(key=lambda row: str(row["date"]), reverse=True)
     return rows
 
 
-def summary_from_daily(daily: dict[dt.date, DailyTotals]) -> dict[str, int]:
+def breakdown_rows_from_daily(daily: dict[dt.date, DailyTotals]) -> list[dict[str, int | float | str | bool]]:
+    combined: dict[tuple[str, str], BreakdownTotals] = {}
+
+    for values in daily.values():
+        for key, bucket in values.breakdowns.items():
+            aggregate = combined.get(key)
+            if aggregate is None:
+                aggregate = BreakdownTotals(agent_cli=bucket.agent_cli, model=bucket.model)
+                combined[key] = aggregate
+            aggregate.sessions += bucket.sessions
+            aggregate.input_tokens += bucket.input_tokens
+            aggregate.output_tokens += bucket.output_tokens
+            aggregate.cached_tokens += bucket.cached_tokens
+            aggregate.total_tokens += bucket.total_tokens
+            aggregate.input_cost_usd = round_cost(aggregate.input_cost_usd + bucket.input_cost_usd)
+            aggregate.output_cost_usd = round_cost(aggregate.output_cost_usd + bucket.output_cost_usd)
+            aggregate.cached_cost_usd = round_cost(aggregate.cached_cost_usd + bucket.cached_cost_usd)
+            aggregate.total_cost_usd = round_cost(aggregate.total_cost_usd + bucket.total_cost_usd)
+            aggregate.cost_complete = aggregate.cost_complete and bucket.cost_complete
+
+    return serialize_breakdown_rows(combined)
+
+
+def summary_from_daily(daily: dict[dt.date, DailyTotals]) -> dict[str, int | float | bool | str]:
     days = list(daily.values())
     highest = max((item.total_tokens for item in days), default=0)
+    cost_complete = all(item.cost_complete for item in days) if days else True
     return {
+        "input_tokens": sum(item.input_tokens for item in days),
+        "output_tokens": sum(item.output_tokens for item in days),
+        "cached_tokens": sum(item.cached_tokens for item in days),
         "ytd_total_tokens": sum(item.total_tokens for item in days),
+        "input_cost_usd": round_cost(sum(item.input_cost_usd for item in days)),
+        "output_cost_usd": round_cost(sum(item.output_cost_usd for item in days)),
+        "cached_cost_usd": round_cost(sum(item.cached_cost_usd for item in days)),
+        "total_cost_usd": round_cost(sum(item.total_cost_usd for item in days)),
+        "cost_complete": cost_complete,
+        "cost_status": "complete" if cost_complete else "partial",
         "days_with_usage": len(days),
         "sessions": sum(item.sessions for item in days),
         "highest_single_day": highest,

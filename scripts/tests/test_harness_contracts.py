@@ -17,13 +17,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head><meta charset=\"UTF-8\" /><title>Fixture</title></head>
 <body>
   <main>
-    <section class="panel range-panel">
-      <div class="usage-chart-control-group">
-        <label for="usageProvider">Provider</label>
-        <select id="usageProvider" class="usage-chart-sort" aria-label="Usage provider">
-          <option value="combined">Combined</option>
-          <option value="codex">Codex</option>
-          <option value="claude">Claude</option>
+    <section class=\"panel range-panel\">
+      <div class=\"usage-chart-control-group\">
+        <label for=\"usageProvider\">Provider</label>
+        <select id=\"usageProvider\" class=\"usage-chart-sort\" aria-label=\"Usage provider\">
+          <option value=\"combined\">Combined</option>
+          <option value=\"codex\">Codex</option>
+          <option value=\"claude\">Claude</option>
         </select>
       </div>
     </section>
@@ -32,8 +32,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </section>
     <section class=\"table-wrap\">
       <table>
-        <tbody>
-          <tr><td><span class=\"rank\">1</span></td><td>2026-01-01</td><td class=\"num\">0</td><td class=\"num total-col\">0</td></tr>
+        <tbody id=\"dailyUsageTableBody\">
+          <tr><td><span class=\"rank\">1</span></td><td>2026-01-01</td><td class=\"num\">0</td><td class=\"num\">0</td><td class=\"num\">0</td><td class=\"num\">0</td><td class=\"num total-col\">0</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section class=\"table-wrap\">
+      <table>
+        <tbody id=\"usageBreakdownTableBody\">
+          <tr><td><span class=\"rank\">1</span></td><td>cli</td><td>model</td><td class=\"num\">0</td><td class=\"num\">0</td><td class=\"num\">0</td><td class=\"num\">0</td><td class=\"num total-col\">0</td></tr>
         </tbody>
       </table>
     </section>
@@ -74,12 +81,32 @@ class HarnessContractsTests(unittest.TestCase):
                 codex_root / "2026" / "03" / "03" / "session-a.jsonl",
                 [
                     {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": "codex-session-a",
+                            "originator": "codex_cli_rs",
+                        },
+                    },
+                    {
+                        "type": "turn_context",
+                        "payload": {
+                            "model": "gpt-5.2",
+                        },
+                    },
+                    {
                         "type": "event_msg",
                         "payload": {
                             "type": "token_count",
-                            "info": {"total_token_usage": {"total_tokens": 120}},
+                            "info": {
+                                "total_token_usage": {
+                                    "input_tokens": 100,
+                                    "cached_input_tokens": 20,
+                                    "output_tokens": 20,
+                                    "total_tokens": 120,
+                                }
+                            },
                         },
-                    }
+                    },
                 ],
             )
 
@@ -91,12 +118,13 @@ class HarnessContractsTests(unittest.TestCase):
                         "sessionId": "s-1",
                         "timestamp": "2026-03-03T05:00:00Z",
                         "message": {
+                            "model": "claude-sonnet-4-6",
                             "usage": {
                                 "input_tokens": 10,
                                 "cache_creation_input_tokens": 3,
                                 "cache_read_input_tokens": 2,
                                 "output_tokens": 5,
-                            }
+                            },
                         },
                     }
                 ],
@@ -128,6 +156,90 @@ class HarnessContractsTests(unittest.TestCase):
                 dataset["providers_available"],
                 {"codex": True, "claude": True, "pi": False, "combined": True},
             )
+            self.assertEqual(payload_first["input_tokens"], 110)
+            self.assertEqual(payload_first["output_tokens"], 25)
+            self.assertEqual(payload_first["cached_tokens"], 25)
+            self.assertEqual(payload_first["ytd_total_tokens"], 140)
+            self.assertAlmostEqual(payload_first["input_cost_usd"], 0.00028)
+            self.assertAlmostEqual(payload_first["output_cost_usd"], 0.000375)
+            self.assertAlmostEqual(payload_first["cached_cost_usd"], 0.00001685)
+            self.assertAlmostEqual(payload_first["total_cost_usd"], 0.00067185)
+            self.assertTrue(payload_first["cost_complete"])
+            self.assertEqual(payload_first["pricing"]["warning_count"], 0)
+            self.assertEqual(payload_first["providers"]["combined"]["input_tokens"], 110)
+            self.assertEqual(payload_first["providers"]["combined"]["output_tokens"], 25)
+            self.assertEqual(payload_first["providers"]["combined"]["cached_tokens"], 25)
+            self.assertAlmostEqual(payload_first["providers"]["combined"]["total_cost_usd"], 0.00067185)
+
+            combined_rows = dataset["providers"]["combined"]["rows"]
+            claude_day = datetime.fromisoformat("2026-03-03T05:00:00+00:00").astimezone().date().isoformat()
+            self.assertEqual(
+                combined_rows,
+                [
+                    {
+                        "date": "2026-03-03",
+                        "sessions": 1,
+                        "input_tokens": 100,
+                        "output_tokens": 20,
+                        "cached_tokens": 20,
+                        "total_tokens": 120,
+                        "input_cost_usd": 0.00025,
+                        "output_cost_usd": 0.0003,
+                        "cached_cost_usd": 0.000005,
+                        "total_cost_usd": 0.000555,
+                        "cost_complete": True,
+                        "cost_status": "complete",
+                        "breakdown_rows": [
+                            {
+                                "agent_cli": "codex_cli_rs",
+                                "model": "gpt-5.2",
+                                "sessions": 1,
+                                "input_tokens": 100,
+                                "output_tokens": 20,
+                                "cached_tokens": 20,
+                                "total_tokens": 120,
+                                "input_cost_usd": 0.00025,
+                                "output_cost_usd": 0.0003,
+                                "cached_cost_usd": 0.000005,
+                                "total_cost_usd": 0.000555,
+                                "cost_complete": True,
+                                "cost_status": "complete",
+                            }
+                        ],
+                    },
+                    {
+                        "date": claude_day,
+                        "sessions": 1,
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "cached_tokens": 5,
+                        "total_tokens": 20,
+                        "input_cost_usd": 0.00003,
+                        "output_cost_usd": 0.000075,
+                        "cached_cost_usd": 0.00001185,
+                        "total_cost_usd": 0.00011685,
+                        "cost_complete": True,
+                        "cost_status": "complete",
+                        "breakdown_rows": [
+                            {
+                                "agent_cli": "claude-code",
+                                "model": "claude-sonnet-4-6",
+                                "sessions": 1,
+                                "input_tokens": 10,
+                                "output_tokens": 5,
+                                "cached_tokens": 5,
+                                "total_tokens": 20,
+                                "input_cost_usd": 0.00003,
+                                "output_cost_usd": 0.000075,
+                                "cached_cost_usd": 0.00001185,
+                                "total_cost_usd": 0.00011685,
+                                "cost_complete": True,
+                                "cost_status": "complete",
+                            }
+                        ],
+                    },
+                ],
+            )
 
     def test_recalc_pipeline_clamps_current_week_end_on_monday(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -146,7 +258,14 @@ class HarnessContractsTests(unittest.TestCase):
                         "type": "event_msg",
                         "payload": {
                             "type": "token_count",
-                            "info": {"total_token_usage": {"total_tokens": 777}},
+                            "info": {
+                                "total_token_usage": {
+                                    "input_tokens": 700,
+                                    "cached_input_tokens": 0,
+                                    "output_tokens": 77,
+                                    "total_tokens": 777,
+                                }
+                            },
                         },
                     }
                 ],
@@ -185,7 +304,14 @@ class HarnessContractsTests(unittest.TestCase):
                         "type": "event_msg",
                         "payload": {
                             "type": "token_count",
-                            "info": {"total_token_usage": {"total_tokens": 500}},
+                            "info": {
+                                "total_token_usage": {
+                                    "input_tokens": 450,
+                                    "cached_input_tokens": 0,
+                                    "output_tokens": 50,
+                                    "total_tokens": 500,
+                                }
+                            },
                         },
                     }
                 ],
@@ -197,7 +323,14 @@ class HarnessContractsTests(unittest.TestCase):
                         "type": "event_msg",
                         "payload": {
                             "type": "token_count",
-                            "info": {"total_token_usage": {"total_tokens": 250}},
+                            "info": {
+                                "total_token_usage": {
+                                    "input_tokens": 200,
+                                    "cached_input_tokens": 0,
+                                    "output_tokens": 50,
+                                    "total_tokens": 250,
+                                }
+                            },
                         },
                     }
                 ],
@@ -218,7 +351,62 @@ class HarnessContractsTests(unittest.TestCase):
 
             self.assertIn("Today (2026-03-04, 1 sessions)", html)
             self.assertIn("Current Week (2026-03-02 to 2026-03-04, 2 sessions)", html)
+            self.assertIn("YTD Input Tokens", html)
+            self.assertIn("YTD Total Cost", html)
             self.assertEqual(html.count('id="usageDataset"'), 1)
+
+    def test_recalc_pipeline_marks_partial_cost_when_model_pricing_is_unmapped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dashboard_path = root / "dashboard" / "index.html"
+            dashboard_path.parent.mkdir(parents=True, exist_ok=True)
+            dashboard_path.write_text(HTML_TEMPLATE, encoding="utf-8")
+
+            codex_root = root / "codex"
+            self._write_jsonl(
+                codex_root / "2026" / "03" / "03" / "session-unknown.jsonl",
+                [
+                    {
+                        "type": "turn_context",
+                        "payload": {
+                            "model": "unknown-model",
+                        },
+                    },
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "total_token_usage": {
+                                    "input_tokens": 10,
+                                    "cached_input_tokens": 0,
+                                    "output_tokens": 5,
+                                    "total_tokens": 15,
+                                }
+                            },
+                        },
+                    },
+                ],
+            )
+
+            config = DashboardConfig(
+                host="127.0.0.1",
+                port=8765,
+                dashboard_html=dashboard_path,
+                sessions_root=codex_root,
+                claude_projects_root=root / "claude",
+                pi_agent_root=root / "pi-agent",
+            )
+
+            payload = recalc_dashboard(config, now=datetime(2026, 3, 4, 15, 0, tzinfo=timezone.utc))
+            dataset = self._read_dataset_from_html(dashboard_path.read_text(encoding="utf-8"))
+
+            self.assertFalse(payload["cost_complete"])
+            self.assertEqual(payload["cost_status"], "partial")
+            self.assertEqual(payload["pricing"]["warning_count"], 1)
+            self.assertEqual(payload["pricing"]["warnings"], [{"provider": "codex", "model": "unknown-model"}])
+            self.assertFalse(dataset["providers"]["combined"]["rows"][0]["cost_complete"])
+            self.assertEqual(dataset["providers"]["combined"]["rows"][0]["cost_status"], "partial")
 
     def test_recalc_pipeline_adds_pi_provider_and_filters_provider_selector(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -238,7 +426,14 @@ class HarnessContractsTests(unittest.TestCase):
                         "type": "event_msg",
                         "payload": {
                             "type": "token_count",
-                            "info": {"total_token_usage": {"total_tokens": 120}},
+                            "info": {
+                                "total_token_usage": {
+                                    "input_tokens": 100,
+                                    "cached_input_tokens": 17,
+                                    "output_tokens": 20,
+                                    "total_tokens": 120,
+                                }
+                            },
                         },
                     }
                 ],
@@ -252,6 +447,13 @@ class HarnessContractsTests(unittest.TestCase):
                         "id": "pi-session-a",
                         "timestamp": "2026-03-03T21:46:05.286Z",
                         "cwd": "/Users/jwei",
+                    },
+                    {
+                        "type": "model_change",
+                        "id": "model-a",
+                        "timestamp": "2026-03-03T21:46:10.000Z",
+                        "provider": "openai-codex",
+                        "modelId": "gpt-5.4",
                     },
                     {
                         "type": "message",
@@ -289,7 +491,42 @@ class HarnessContractsTests(unittest.TestCase):
                 dataset["providers_available"],
                 {"codex": True, "claude": False, "pi": True, "combined": True},
             )
-            self.assertEqual(dataset["providers"]["pi"]["rows"], [{"date": "2026-03-03", "sessions": 1, "total_tokens": 33}])
+            self.assertEqual(
+                dataset["providers"]["pi"]["rows"],
+                [
+                    {
+                        "date": "2026-03-03",
+                        "sessions": 1,
+                        "input_tokens": 30,
+                        "output_tokens": 3,
+                        "cached_tokens": 0,
+                        "total_tokens": 33,
+                        "input_cost_usd": 0.000075,
+                        "output_cost_usd": 0.000045,
+                        "cached_cost_usd": 0.0,
+                        "total_cost_usd": 0.00012,
+                        "cost_complete": True,
+                        "cost_status": "complete",
+                        "breakdown_rows": [
+                            {
+                                "agent_cli": "pi",
+                                "model": "gpt-5.4",
+                                "sessions": 1,
+                                "input_tokens": 30,
+                                "output_tokens": 3,
+                                "cached_tokens": 0,
+                                "total_tokens": 33,
+                                "input_cost_usd": 0.000075,
+                                "output_cost_usd": 0.000045,
+                                "cached_cost_usd": 0.0,
+                                "total_cost_usd": 0.00012,
+                                "cost_complete": True,
+                                "cost_status": "complete",
+                            }
+                        ],
+                    }
+                ],
+            )
             self.assertIn('<option value="combined">Combined</option>', html)
             self.assertIn('<option value="codex">Codex</option>', html)
             self.assertIn('<option value="pi">PI</option>', html)
