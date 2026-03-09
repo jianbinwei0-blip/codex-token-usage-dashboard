@@ -1,8 +1,18 @@
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass
 
 from .models import BreakdownTotals, DailyTotals, round_cost
+
+
+@dataclass
+class DailyMaterialization:
+    values: list[DailyTotals]
+    rows: list[dict[str, int | float | str | bool | list[dict[str, int | float | str | bool]]]]
+    ranked_values: list[DailyTotals]
+    summary: dict[str, int | float | bool | str]
+    breakdown_rows: list[dict[str, int | float | str | bool]]
 
 
 def serialize_breakdown_rows(breakdowns: dict[tuple[str, str], BreakdownTotals]) -> list[dict[str, int | float | str | bool]]:
@@ -70,74 +80,121 @@ def slice_daily(daily: dict[dt.date, DailyTotals], from_date: dt.date, to_date: 
     }
 
 
-def rows_from_daily(
+def materialize_daily(
     daily: dict[dt.date, DailyTotals],
-) -> list[dict[str, int | float | str | bool | list[dict[str, int | float | str | bool]]]]:
+    from_date: dt.date | None = None,
+    to_date: dt.date | None = None,
+    *,
+    include_breakdown_rows: bool = False,
+) -> DailyMaterialization:
+    values: list[DailyTotals] = []
     rows: list[dict[str, int | float | str | bool | list[dict[str, int | float | str | bool]]]] = []
-    for usage_date, values in daily.items():
+    breakdown_totals: dict[tuple[str, str], BreakdownTotals] = {}
+    input_tokens = 0
+    output_tokens = 0
+    cached_tokens = 0
+    total_tokens = 0
+    input_cost_usd = 0.0
+    output_cost_usd = 0.0
+    cached_cost_usd = 0.0
+    total_cost_usd = 0.0
+    sessions = 0
+    highest_single_day = 0
+    cost_complete = True
+
+    for usage_date, item in daily.items():
+        if from_date is not None and usage_date < from_date:
+            continue
+        if to_date is not None and usage_date > to_date:
+            continue
+
+        values.append(item)
         rows.append(
             {
                 "date": usage_date.isoformat(),
-                "sessions": values.sessions,
-                "input_tokens": values.input_tokens,
-                "output_tokens": values.output_tokens,
-                "cached_tokens": values.cached_tokens,
-                "total_tokens": values.total_tokens,
-                "input_cost_usd": values.input_cost_usd,
-                "output_cost_usd": values.output_cost_usd,
-                "cached_cost_usd": values.cached_cost_usd,
-                "total_cost_usd": values.total_cost_usd,
-                "cost_complete": values.cost_complete,
-                "cost_status": values.cost_status,
-                "breakdown_rows": serialize_breakdown_rows(values.breakdowns),
+                "sessions": item.sessions,
+                "input_tokens": item.input_tokens,
+                "output_tokens": item.output_tokens,
+                "cached_tokens": item.cached_tokens,
+                "total_tokens": item.total_tokens,
+                "input_cost_usd": item.input_cost_usd,
+                "output_cost_usd": item.output_cost_usd,
+                "cached_cost_usd": item.cached_cost_usd,
+                "total_cost_usd": item.total_cost_usd,
+                "cost_complete": item.cost_complete,
+                "cost_status": item.cost_status,
+                "breakdown_rows": serialize_breakdown_rows(item.breakdowns),
             }
         )
+
+        input_tokens += item.input_tokens
+        output_tokens += item.output_tokens
+        cached_tokens += item.cached_tokens
+        total_tokens += item.total_tokens
+        input_cost_usd = round_cost(input_cost_usd + item.input_cost_usd)
+        output_cost_usd = round_cost(output_cost_usd + item.output_cost_usd)
+        cached_cost_usd = round_cost(cached_cost_usd + item.cached_cost_usd)
+        total_cost_usd = round_cost(total_cost_usd + item.total_cost_usd)
+        sessions += item.sessions
+        highest_single_day = max(highest_single_day, item.total_tokens)
+        cost_complete = cost_complete and item.cost_complete
+
+        if include_breakdown_rows:
+            for key, bucket in item.breakdowns.items():
+                aggregate = breakdown_totals.get(key)
+                if aggregate is None:
+                    aggregate = BreakdownTotals(agent_cli=bucket.agent_cli, model=bucket.model)
+                    breakdown_totals[key] = aggregate
+                aggregate.sessions += bucket.sessions
+                aggregate.input_tokens += bucket.input_tokens
+                aggregate.output_tokens += bucket.output_tokens
+                aggregate.cached_tokens += bucket.cached_tokens
+                aggregate.total_tokens += bucket.total_tokens
+                aggregate.input_cost_usd = round_cost(aggregate.input_cost_usd + bucket.input_cost_usd)
+                aggregate.output_cost_usd = round_cost(aggregate.output_cost_usd + bucket.output_cost_usd)
+                aggregate.cached_cost_usd = round_cost(aggregate.cached_cost_usd + bucket.cached_cost_usd)
+                aggregate.total_cost_usd = round_cost(aggregate.total_cost_usd + bucket.total_cost_usd)
+                aggregate.cost_complete = aggregate.cost_complete and bucket.cost_complete
+
     rows.sort(key=lambda row: str(row["date"]), reverse=True)
-    return rows
+    ranked_values = sorted(values, key=lambda item: (-item.total_tokens, item.date.isoformat()))
+    materialized_breakdown_rows = serialize_breakdown_rows(breakdown_totals) if include_breakdown_rows else []
+
+    return DailyMaterialization(
+        values=values,
+        rows=rows,
+        ranked_values=ranked_values,
+        summary={
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cached_tokens": cached_tokens,
+            "ytd_total_tokens": total_tokens,
+            "input_cost_usd": input_cost_usd,
+            "output_cost_usd": output_cost_usd,
+            "cached_cost_usd": cached_cost_usd,
+            "total_cost_usd": total_cost_usd,
+            "cost_complete": cost_complete,
+            "cost_status": "complete" if cost_complete else "partial",
+            "days_with_usage": len(values),
+            "sessions": sessions,
+            "highest_single_day": highest_single_day,
+        },
+        breakdown_rows=materialized_breakdown_rows,
+    )
+
+
+def rows_from_daily(
+    daily: dict[dt.date, DailyTotals],
+) -> list[dict[str, int | float | str | bool | list[dict[str, int | float | str | bool]]]]:
+    return materialize_daily(daily).rows
 
 
 def breakdown_rows_from_daily(daily: dict[dt.date, DailyTotals]) -> list[dict[str, int | float | str | bool]]:
-    combined: dict[tuple[str, str], BreakdownTotals] = {}
-
-    for values in daily.values():
-        for key, bucket in values.breakdowns.items():
-            aggregate = combined.get(key)
-            if aggregate is None:
-                aggregate = BreakdownTotals(agent_cli=bucket.agent_cli, model=bucket.model)
-                combined[key] = aggregate
-            aggregate.sessions += bucket.sessions
-            aggregate.input_tokens += bucket.input_tokens
-            aggregate.output_tokens += bucket.output_tokens
-            aggregate.cached_tokens += bucket.cached_tokens
-            aggregate.total_tokens += bucket.total_tokens
-            aggregate.input_cost_usd = round_cost(aggregate.input_cost_usd + bucket.input_cost_usd)
-            aggregate.output_cost_usd = round_cost(aggregate.output_cost_usd + bucket.output_cost_usd)
-            aggregate.cached_cost_usd = round_cost(aggregate.cached_cost_usd + bucket.cached_cost_usd)
-            aggregate.total_cost_usd = round_cost(aggregate.total_cost_usd + bucket.total_cost_usd)
-            aggregate.cost_complete = aggregate.cost_complete and bucket.cost_complete
-
-    return serialize_breakdown_rows(combined)
+    return materialize_daily(daily, include_breakdown_rows=True).breakdown_rows
 
 
 def summary_from_daily(daily: dict[dt.date, DailyTotals]) -> dict[str, int | float | bool | str]:
-    days = list(daily.values())
-    highest = max((item.total_tokens for item in days), default=0)
-    cost_complete = all(item.cost_complete for item in days) if days else True
-    return {
-        "input_tokens": sum(item.input_tokens for item in days),
-        "output_tokens": sum(item.output_tokens for item in days),
-        "cached_tokens": sum(item.cached_tokens for item in days),
-        "ytd_total_tokens": sum(item.total_tokens for item in days),
-        "input_cost_usd": round_cost(sum(item.input_cost_usd for item in days)),
-        "output_cost_usd": round_cost(sum(item.output_cost_usd for item in days)),
-        "cached_cost_usd": round_cost(sum(item.cached_cost_usd for item in days)),
-        "total_cost_usd": round_cost(sum(item.total_cost_usd for item in days)),
-        "cost_complete": cost_complete,
-        "cost_status": "complete" if cost_complete else "partial",
-        "days_with_usage": len(days),
-        "sessions": sum(item.sessions for item in days),
-        "highest_single_day": highest,
-    }
+    return materialize_daily(daily).summary
 
 
 def providers_available(codex_source: object, claude_source: object, pi_source: object = False) -> dict[str, bool]:

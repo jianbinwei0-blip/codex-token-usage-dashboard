@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 from pathlib import Path
 
 from .models import DailyTotals
@@ -62,6 +63,14 @@ def apply_usage_to_daily(
         total_cost_usd=total_cost_usd,
         cost_complete=cost_complete,
     )
+
+
+def iter_jsonl_files(root: Path):
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for filename in sorted(filenames):
+            if filename.endswith(".jsonl"):
+                yield Path(dirpath) / filename
 
 
 def parse_codex_session_usage(session_path: Path) -> dict[str, int | str] | None:
@@ -151,7 +160,7 @@ def collect_codex_daily_totals(
     catalog = pricing_catalog or PricingCatalog.from_file(None)
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
 
-    for file_path in sessions_root.rglob("*.jsonl"):
+    for file_path in iter_jsonl_files(sessions_root):
         relative = file_path.relative_to(sessions_root).parts
         if len(relative) < 4:
             continue
@@ -238,7 +247,7 @@ def collect_claude_daily_totals(
     catalog = pricing_catalog or PricingCatalog.from_file(None)
     request_usage: dict[tuple[str, str], dict[str, object]] = {}
 
-    for file_path in claude_projects_root.rglob("*.jsonl"):
+    for file_path in iter_jsonl_files(claude_projects_root):
         session_scope = file_path.stem
         with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
             for line in handle:
@@ -382,7 +391,7 @@ def collect_pi_daily_totals(
     daily_sessions: dict[dt.date, set[str]] = {}
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
 
-    for file_path in sessions_root.rglob("*.jsonl"):
+    for file_path in iter_jsonl_files(sessions_root):
         session_id = file_path.stem
         active_model = DEFAULT_MODEL
         with file_path.open("r", encoding="utf-8", errors="ignore") as handle:

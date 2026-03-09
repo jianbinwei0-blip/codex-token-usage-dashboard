@@ -82,7 +82,7 @@ class PricingCatalog:
     @classmethod
     def from_file(cls, pricing_file: Path | None) -> "PricingCatalog":
         if pricing_file is None:
-            return cls(_copy_rate_card(BUILTIN_RATE_CARD), source="built-in")
+            return cls(BUILTIN_RATE_CARD, source="built-in")
 
         override = json.loads(pricing_file.read_text(encoding="utf-8"))
         merged = _copy_rate_card(BUILTIN_RATE_CARD)

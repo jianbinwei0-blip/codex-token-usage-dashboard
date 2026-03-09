@@ -1,22 +1,39 @@
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 
-from .aggregation import (
-    breakdown_rows_from_daily,
-    combine_daily_totals,
-    current_week_end,
-    providers_available,
-    rows_from_daily,
-    slice_daily,
-    summary_from_daily,
-    sum_range,
-)
+from .aggregation import combine_daily_totals, current_week_end, materialize_daily, providers_available, sum_range
 from .collectors import collect_claude_daily_totals, collect_codex_daily_totals, collect_pi_daily_totals
 from .config import DashboardConfig
 from .models import round_cost
 from .pricing import PricingCatalog
 from .render import build_breakdown_table_body, build_stats_section, build_table_body, rewrite_dashboard_html
+
+
+_HTML_CACHE: dict[str, tuple[int, str]] = {}
+
+
+def read_dashboard_html(path: Path) -> str:
+    cache_key = str(path)
+    mtime_ns = path.stat().st_mtime_ns
+    cached = _HTML_CACHE.get(cache_key)
+    if cached is not None and cached[0] == mtime_ns:
+        return cached[1]
+
+    html = path.read_text(encoding="utf-8")
+    _HTML_CACHE[cache_key] = (mtime_ns, html)
+    return html
+
+
+def write_dashboard_html(path: Path, html: str) -> None:
+    cache_key = str(path)
+    cached = _HTML_CACHE.get(cache_key)
+    if cached is not None and cached[1] == html and path.exists():
+        return
+
+    path.write_text(html, encoding="utf-8")
+    _HTML_CACHE[cache_key] = (path.stat().st_mtime_ns, html)
 
 
 def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) -> dict:
@@ -31,24 +48,30 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
     pi_daily_all = collect_pi_daily_totals(config.pi_agent_root, pricing_catalog=pricing_catalog)
     combined_daily_all = combine_daily_totals(codex_daily_all, claude_daily_all, pi_daily_all)
 
-    codex_daily_ytd = slice_daily(codex_daily_all, ytd_from, today)
-    claude_daily_ytd = slice_daily(claude_daily_all, ytd_from, today)
-    pi_daily_ytd = slice_daily(pi_daily_all, ytd_from, today)
-    combined_daily_ytd = slice_daily(combined_daily_all, ytd_from, today)
+    codex_all = materialize_daily(codex_daily_all)
+    claude_all = materialize_daily(claude_daily_all)
+    pi_all = materialize_daily(pi_daily_all)
+    combined_all = materialize_daily(combined_daily_all)
 
-    rows = sorted(combined_daily_ytd.values(), key=lambda item: (-item.total_tokens, item.date.isoformat()))
-    days_count = len(rows)
-    sessions_total = sum(item.sessions for item in rows)
-    input_total = sum(item.input_tokens for item in rows)
-    output_total = sum(item.output_tokens for item in rows)
-    cached_total = sum(item.cached_tokens for item in rows)
-    ytd_total = sum(item.total_tokens for item in rows)
-    input_cost_total = round_cost(sum(item.input_cost_usd for item in rows))
-    output_cost_total = round_cost(sum(item.output_cost_usd for item in rows))
-    cached_cost_total = round_cost(sum(item.cached_cost_usd for item in rows))
-    total_cost = round_cost(sum(item.total_cost_usd for item in rows))
-    cost_complete = all(item.cost_complete for item in rows) if rows else True
-    highest = rows[0].total_tokens if rows else 0
+    codex_ytd = materialize_daily(codex_daily_all, ytd_from, today)
+    claude_ytd = materialize_daily(claude_daily_all, ytd_from, today)
+    pi_ytd = materialize_daily(pi_daily_all, ytd_from, today)
+    combined_ytd = materialize_daily(combined_daily_all, ytd_from, today, include_breakdown_rows=True)
+
+    rows = combined_ytd.ranked_values
+    summary = combined_ytd.summary
+    days_count = int(summary["days_with_usage"])
+    sessions_total = int(summary["sessions"])
+    input_total = int(summary["input_tokens"])
+    output_total = int(summary["output_tokens"])
+    cached_total = int(summary["cached_tokens"])
+    ytd_total = int(summary["ytd_total_tokens"])
+    input_cost_total = round_cost(float(summary["input_cost_usd"]))
+    output_cost_total = round_cost(float(summary["output_cost_usd"]))
+    cached_cost_total = round_cost(float(summary["cached_cost_usd"]))
+    total_cost = round_cost(float(summary["total_cost_usd"]))
+    cost_complete = bool(summary["cost_complete"])
+    highest = int(summary["highest_single_day"])
 
     today_sessions, today_total = sum_range(combined_daily_all, today, today)
 
@@ -95,12 +118,8 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
     )
 
     table_body = build_table_body(rows)
-    breakdown_body = build_breakdown_table_body(breakdown_rows_from_daily(combined_daily_ytd))
+    breakdown_body = build_breakdown_table_body(combined_ytd.breakdown_rows)
 
-    codex_rows_all = rows_from_daily(codex_daily_all)
-    claude_rows_all = rows_from_daily(claude_daily_all)
-    pi_rows_all = rows_from_daily(pi_daily_all)
-    combined_rows_all = rows_from_daily(combined_daily_all)
     provider_flags = providers_available(
         config.sessions_root.exists(),
         config.claude_projects_root.exists(),
@@ -121,16 +140,16 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
         "providers_available": provider_flags,
         "pricing": pricing_metadata,
         "providers": {
-            "codex": {"rows": codex_rows_all},
-            "claude": {"rows": claude_rows_all},
-            "pi": {"rows": pi_rows_all},
-            "combined": {"rows": combined_rows_all},
+            "codex": {"rows": codex_all.rows},
+            "claude": {"rows": claude_all.rows},
+            "pi": {"rows": pi_all.rows},
+            "combined": {"rows": combined_all.rows},
         },
     }
 
-    html = config.dashboard_html.read_text(encoding="utf-8")
+    html = read_dashboard_html(config.dashboard_html)
     html = rewrite_dashboard_html(html, stats_section, table_body, breakdown_body, dataset_payload)
-    config.dashboard_html.write_text(html, encoding="utf-8")
+    write_dashboard_html(config.dashboard_html, html)
 
     return {
         "ok": True,
@@ -157,9 +176,9 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
         "providers_available": provider_flags,
         "pricing": pricing_metadata,
         "providers": {
-            "codex": summary_from_daily(codex_daily_ytd),
-            "claude": summary_from_daily(claude_daily_ytd),
-            "pi": summary_from_daily(pi_daily_ytd),
-            "combined": summary_from_daily(combined_daily_ytd),
+            "codex": codex_ytd.summary,
+            "claude": claude_ytd.summary,
+            "pi": pi_ytd.summary,
+            "combined": combined_ytd.summary,
         },
     }

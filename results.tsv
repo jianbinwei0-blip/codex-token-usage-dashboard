@@ -1,2 +1,14 @@
 commit	median_recalc_ms	gates	status	description
 df885c9	0.647	pass	keep	baseline
+dff95e5	0.533	pass	keep	replace recursive glob with cheaper jsonl file walk
+ac6816b	0.527	pass	keep	cache dashboard html between recalcs with mtime invalidation
+b904847	0.470	pass	keep	skip unchanged html writes
+8895b5c	0.459	pass	keep	reuse built-in pricing rate card without deep copy
+38ed1a4	0.561	pass	discard	cache provider-model pricing lookups
+2de9855	0.417	pass	keep	precompile hot html rewrite regexes
+2308917	0.417	pass	discard	replace dataset regex with string splice
+dd858ff	0.421	pass	discard	remove redundant html exists check
+fc13091	0.447	pass	discard	compute only requested daily materializations
+297618d	0.414	pass	keep	splice provider select directly
+0100d73	0.449	pass	discard	drop redundant sort coercions
+917b5b7	0.641	pass	discard	yield relative jsonl entries from collector walk

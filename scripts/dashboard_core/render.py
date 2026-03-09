@@ -5,6 +5,14 @@ import json
 import re
 
 
+USAGE_DATASET_PATTERN = re.compile(r'<script id="usageDataset" type="application/json">.*?</script>', re.DOTALL)
+PROVIDER_SELECT_OPEN = '<select id="usageProvider"'
+PROVIDER_SELECT_CLOSE = "</select>"
+STATS_SECTION_PATTERN = re.compile(r'^[ \t]*<section class="stats">.*?</section>', re.DOTALL | re.MULTILINE)
+DAILY_USAGE_TBODY_PATTERN = re.compile(r'<tbody id="dailyUsageTableBody">.*?</tbody>', re.DOTALL)
+BREAKDOWN_TBODY_PATTERN = re.compile(r'<tbody id="usageBreakdownTableBody">.*?</tbody>', re.DOTALL)
+
+
 def format_number(value: int) -> str:
     return f"{value:,}"
 
@@ -150,10 +158,9 @@ def build_breakdown_table_body(rows: list[dict[str, int | float | str | bool]]) 
 def inject_usage_dataset(html: str, dataset: dict) -> str:
     dataset_json = json.dumps(dataset, separators=(",", ":"))
     script = f'<script id="usageDataset" type="application/json">{dataset_json}</script>'
-    pattern = r"<script id=\"usageDataset\" type=\"application/json\">.*?</script>"
 
-    if re.search(pattern, html, flags=re.DOTALL):
-        return re.sub(pattern, script, html, count=1, flags=re.DOTALL)
+    if USAGE_DATASET_PATTERN.search(html):
+        return USAGE_DATASET_PATTERN.sub(script, html, count=1)
 
     if "</main>" in html:
         return html.replace("</main>", f"  {script}\n  </main>", 1)
@@ -186,42 +193,33 @@ def build_provider_options(dataset: dict) -> str:
 
 
 def rewrite_provider_select(html: str, dataset: dict) -> str:
-    pattern = r"(<select id=\"usageProvider\"[^>]*>)(.*?)(</select>)"
     options = build_provider_options(dataset)
-
-    if not re.search(pattern, html, flags=re.DOTALL):
+    start = html.find(PROVIDER_SELECT_OPEN)
+    if start < 0:
         return html
 
-    return re.sub(
-        pattern,
-        lambda match: f"{match.group(1)}\n{options}\n            {match.group(3)}",
-        html,
-        count=1,
-        flags=re.DOTALL,
+    open_end = html.find(">", start)
+    if open_end < 0:
+        return html
+
+    close_start = html.find(PROVIDER_SELECT_CLOSE, open_end)
+    if close_start < 0:
+        return html
+
+    close_end = close_start + len(PROVIDER_SELECT_CLOSE)
+    return (
+        html[: open_end + 1]
+        + "\n"
+        + options
+        + "\n            "
+        + PROVIDER_SELECT_CLOSE
+        + html[close_end:]
     )
 
 
 def rewrite_dashboard_html(html: str, stats_section: str, table_body: str, breakdown_body: str, dataset: dict) -> str:
-    updated = re.sub(
-        r"^[ \t]*<section class=\"stats\">.*?</section>",
-        stats_section,
-        html,
-        count=1,
-        flags=re.DOTALL | re.MULTILINE,
-    )
-    updated = re.sub(
-        r"<tbody id=\"dailyUsageTableBody\">.*?</tbody>",
-        table_body,
-        updated,
-        count=1,
-        flags=re.DOTALL,
-    )
-    updated = re.sub(
-        r"<tbody id=\"usageBreakdownTableBody\">.*?</tbody>",
-        breakdown_body,
-        updated,
-        count=1,
-        flags=re.DOTALL,
-    )
+    updated = STATS_SECTION_PATTERN.sub(stats_section, html, count=1)
+    updated = DAILY_USAGE_TBODY_PATTERN.sub(table_body, updated, count=1)
+    updated = BREAKDOWN_TBODY_PATTERN.sub(breakdown_body, updated, count=1)
     updated = rewrite_provider_select(updated, dataset)
     return inject_usage_dataset(updated, dataset)
