@@ -31,6 +31,16 @@ def format_usd(value: float) -> str:
     return f"${value:,.2f}"
 
 
+def format_session_count(count: int) -> str:
+    noun = "session" if count == 1 else "sessions"
+    return f"{count:,} {noun}"
+
+
+def format_period_label(title: str, start_date: dt.date, end_date: dt.date, sessions: int) -> str:
+    range_text = start_date.isoformat() if start_date == end_date else f"{start_date.isoformat()} → {end_date.isoformat()}"
+    return f"{title} · {range_text} · {format_session_count(sessions)}"
+
+
 def format_cost_display(value: float, cost_complete: bool) -> str:
     rendered = format_usd(value)
     return rendered if cost_complete else f"{rendered} (partial)"
@@ -66,70 +76,110 @@ def build_stats_sections(
     prev2_week_sessions: int,
     prev2_week_total: int,
 ) -> tuple[str, str]:
-    fixed_stats_section = f"""    <section id=\"fixedStats\" class=\"stats stats-fixed\">
-      <article class=\"stat\">
-        <div class=\"label\">Today ({today.isoformat()}, {today_sessions} sessions)</div>
-        <div class=\"value\">{format_number(today_total)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">Current Week ({current_monday.isoformat()} to {current_week_end.isoformat()}, {current_week_sessions} sessions)</div>
-        <div class=\"value\">{format_number(current_week_total)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">Previous Week ({prev_week_monday.isoformat()} to {prev_week_sunday.isoformat()}, {prev_week_sessions} sessions)</div>
-        <div class=\"value\">{format_number(prev_week_total)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">2 Weeks Ago ({prev2_week_monday.isoformat()} to {prev2_week_sunday.isoformat()}, {prev2_week_sessions} sessions)</div>
-        <div class=\"value\">{format_number(prev2_week_total)}</div>
-      </article>
+    fixed_stats_section = f"""    <section id="fixedStats" class="stats stats-fixed">
+      <div class="stat-group stat-group--pulse">
+        <div class="stat-group__header">
+          <div class="stat-group__eyebrow">Live Pulse</div>
+          <div class="stat-group__hint">Current movement</div>
+        </div>
+        <div class="stat-group__grid">
+          <article class="stat stat--signal">
+            <div class="label">Today</div>
+            <div class="value">{format_number(today_total)}</div>
+          </article>
+          <article class="stat stat--signal">
+            <div class="label">Current Week</div>
+            <div class="value">{format_number(current_week_total)}</div>
+          </article>
+        </div>
+      </div>
+      <div class="stat-group stat-group--history">
+        <div class="stat-group__header">
+          <div class="stat-group__eyebrow">Recent Cadence</div>
+          <div class="stat-group__hint">Weekly comparison</div>
+        </div>
+        <div class="stat-group__grid">
+          <article class="stat stat--history">
+            <div class="label">Previous Week</div>
+            <div class="value">{format_number(prev_week_total)}</div>
+          </article>
+          <article class="stat stat--history">
+            <div class="label">2 Weeks Ago</div>
+            <div class="value">{format_number(prev2_week_total)}</div>
+          </article>
+        </div>
+      </div>
     </section>"""
 
-    range_stats_section = f"""    <section id=\"rangeStats\" class=\"stats\">
-      <article class=\"stat\">
-        <div class=\"label\">YTD Total Tokens</div>
-        <div class=\"value\">{format_number(ytd_total)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">Days With Usage</div>
-        <div class=\"value\">{days_count}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">Total Sessions</div>
-        <div class=\"value\">{sessions_total}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">Highest Single Day</div>
-        <div class=\"value\">{format_number(highest)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">YTD Input Tokens</div>
-        <div class=\"value\">{format_number(input_total)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">YTD Output Tokens</div>
-        <div class=\"value\">{format_number(output_total)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">YTD Cached Tokens</div>
-        <div class=\"value\">{format_number(cached_total)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">YTD Total Cost</div>
-        <div class=\"value\">{format_cost_display(total_cost, cost_complete)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">YTD Input Cost</div>
-        <div class=\"value\">{format_cost_display(input_cost_total, cost_complete)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">YTD Output Cost</div>
-        <div class=\"value\">{format_cost_display(output_cost_total, cost_complete)}</div>
-      </article>
-      <article class=\"stat\">
-        <div class=\"label\">YTD Cached Cost</div>
-        <div class=\"value\">{format_cost_display(cached_cost_total, cost_complete)}</div>
-      </article>
+    range_stats_section = f"""    <section id="rangeStats" class="stats stats-clustered">
+      <div class="stat-group stat-group--overview">
+        <div class="stat-group__header">
+          <div class="stat-group__eyebrow">Range Snapshot</div>
+          <div class="stat-group__hint">Selected window</div>
+        </div>
+        <div class="stat-group__grid">
+          <article class="stat stat--overview">
+            <div class="label">Total Tokens</div>
+            <div class="value">{format_number(ytd_total)}</div>
+          </article>
+          <article class="stat stat--overview">
+            <div class="label">Days With Usage</div>
+            <div class="value">{days_count}</div>
+          </article>
+          <article class="stat stat--overview">
+            <div class="label">Total Sessions</div>
+            <div class="value">{sessions_total}</div>
+          </article>
+          <article class="stat stat--overview">
+            <div class="label">Highest Single Day</div>
+            <div class="value">{format_number(highest)}</div>
+          </article>
+        </div>
+      </div>
+      <div class="stat-group stat-group--tokens">
+        <div class="stat-group__header">
+          <div class="stat-group__eyebrow">Token Flow</div>
+          <div class="stat-group__hint">Volume mix</div>
+        </div>
+        <div class="stat-group__grid">
+          <article class="stat stat--tokens">
+            <div class="label">Input Tokens</div>
+            <div class="value">{format_number(input_total)}</div>
+          </article>
+          <article class="stat stat--tokens">
+            <div class="label">Output Tokens</div>
+            <div class="value">{format_number(output_total)}</div>
+          </article>
+          <article class="stat stat--tokens">
+            <div class="label">Cached Tokens</div>
+            <div class="value">{format_number(cached_total)}</div>
+          </article>
+        </div>
+      </div>
+      <div class="stat-group stat-group--costs">
+        <div class="stat-group__header">
+          <div class="stat-group__eyebrow">Cost Surface</div>
+          <div class="stat-group__hint">Spend profile</div>
+        </div>
+        <div class="stat-group__grid">
+          <article class="stat stat--cost">
+            <div class="label">Total Cost</div>
+            <div class="value">{format_cost_display(total_cost, cost_complete)}</div>
+          </article>
+          <article class="stat stat--cost">
+            <div class="label">Input Cost</div>
+            <div class="value">{format_cost_display(input_cost_total, cost_complete)}</div>
+          </article>
+          <article class="stat stat--cost">
+            <div class="label">Output Cost</div>
+            <div class="value">{format_cost_display(output_cost_total, cost_complete)}</div>
+          </article>
+          <article class="stat stat--cost">
+            <div class="label">Cached Cost</div>
+            <div class="value">{format_cost_display(cached_cost_total, cost_complete)}</div>
+          </article>
+        </div>
+      </div>
     </section>"""
 
     return fixed_stats_section, range_stats_section

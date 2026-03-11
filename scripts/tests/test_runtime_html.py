@@ -53,12 +53,12 @@ class RuntimeHtmlTests(unittest.TestCase):
             html,
             r"\.meta-row--refresh \.chip \{\s*flex: 0 0 auto;\s*max-width: none;\s*white-space: nowrap;\s*overflow: visible;\s*text-overflow: clip;",
         )
-        self.assertIn("YTD Input Tokens", html)
-        self.assertIn("YTD Output Tokens", html)
-        self.assertIn("YTD Cached Tokens", html)
-        self.assertIn("YTD Total Cost", html)
-        self.assertIn("YTD Input Cost", html)
-        self.assertIn("YTD Cached Cost", html)
+        self.assertIn("Input Tokens", html)
+        self.assertIn("Output Tokens", html)
+        self.assertIn("Cached Tokens", html)
+        self.assertIn("Total Cost", html)
+        self.assertIn("Input Cost", html)
+        self.assertIn("Cached Cost", html)
         self.assertIn("Agent CLI + Model Breakdown", html)
         self.assertIn('id="dailyUsageTableBody"', html)
         self.assertIn('id="usageBreakdownTableBody"', html)
@@ -79,6 +79,10 @@ class RuntimeHtmlTests(unittest.TestCase):
         self.assertIn('value="input-cost-desc">Input Cost (High to Low)</option>', html)
         self.assertIn('value="output-cost-desc">Output Cost (High to Low)</option>', html)
         self.assertIn('value="cached-cost-desc">Cached Cost (High to Low)</option>', html)
+        self.assertNotIn("Xbox 360 calm, Her-era warmth, and liquid-glass instrumentation for Codex, Claude, and PI.", html)
+        self.assertIn('usage-chart-control-group--action', html)
+        self.assertIn('<div class="label">Today</div>', html)
+        self.assertNotIn("YTD Input Tokens", html)
 
 
 if __name__ == "__main__":

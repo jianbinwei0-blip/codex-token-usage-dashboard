@@ -284,7 +284,7 @@ class HarnessContractsTests(unittest.TestCase):
             recalc_dashboard(config, now=monday_now)
             html = dashboard_path.read_text(encoding="utf-8")
 
-            self.assertIn("Current Week (2026-03-02 to 2026-03-02", html)
+            self.assertIn('<div class="label">Current Week</div>', html)
             self.assertEqual(html.count('id="usageDataset"'), 1)
 
     def test_recalc_pipeline_includes_today_in_current_week_range(self) -> None:
@@ -349,11 +349,11 @@ class HarnessContractsTests(unittest.TestCase):
             recalc_dashboard(config, now=wednesday_now)
             html = dashboard_path.read_text(encoding="utf-8")
 
-            self.assertIn("Today (2026-03-04, 1 sessions)", html)
-            self.assertIn("Current Week (2026-03-02 to 2026-03-04, 2 sessions)", html)
-            self.assertIn("YTD Input Tokens", html)
-            self.assertIn("YTD Total Cost", html)
-            self.assertLess(html.index("Today (2026-03-04, 1 sessions)"), html.index("YTD Total Tokens"))
+            self.assertIn('<div class="label">Today</div>', html)
+            self.assertIn('<div class="label">Current Week</div>', html)
+            self.assertIn("Input Tokens", html)
+            self.assertIn("Total Cost", html)
+            self.assertLess(html.index('<div class="label">Today</div>'), html.index("Total Tokens"))
             self.assertEqual(html.count('id="usageDataset"'), 1)
 
     def test_recalc_pipeline_marks_partial_cost_when_model_pricing_is_unmapped(self) -> None:
