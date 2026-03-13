@@ -3,8 +3,16 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
-from .aggregation import combine_daily_totals, current_week_end, materialize_daily, providers_available, sum_range
-from .collectors import collect_claude_daily_totals, collect_codex_daily_totals, collect_pi_daily_totals
+from .aggregation import (
+    activity_rows_from_totals,
+    combine_activity_totals,
+    combine_daily_totals,
+    current_week_end,
+    materialize_daily,
+    providers_available,
+    sum_range,
+)
+from .collectors import collect_claude_usage_data, collect_codex_usage_data, collect_pi_usage_data
 from .config import DashboardConfig
 from .models import round_cost
 from .pricing import PricingCatalog
@@ -43,10 +51,14 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
     ytd_from = dt.date(today.year, 1, 1)
     pricing_catalog = PricingCatalog.from_file(config.pricing_file)
 
-    codex_daily_all = collect_codex_daily_totals(config.sessions_root, pricing_catalog=pricing_catalog)
-    claude_daily_all = collect_claude_daily_totals(config.claude_projects_root, pricing_catalog=pricing_catalog)
-    pi_daily_all = collect_pi_daily_totals(config.pi_agent_root, pricing_catalog=pricing_catalog)
+    codex_daily_all, codex_activity_all = collect_codex_usage_data(config.sessions_root, pricing_catalog=pricing_catalog)
+    claude_daily_all, claude_activity_all = collect_claude_usage_data(
+        config.claude_projects_root,
+        pricing_catalog=pricing_catalog,
+    )
+    pi_daily_all, pi_activity_all = collect_pi_usage_data(config.pi_agent_root, pricing_catalog=pricing_catalog)
     combined_daily_all = combine_daily_totals(codex_daily_all, claude_daily_all, pi_daily_all)
+    combined_activity_all = combine_activity_totals(codex_activity_all, claude_activity_all, pi_activity_all)
 
     codex_all = materialize_daily(codex_daily_all)
     claude_all = materialize_daily(claude_daily_all)
@@ -140,10 +152,22 @@ def recalc_dashboard(config: DashboardConfig, now: dt.datetime | None = None) ->
         "providers_available": provider_flags,
         "pricing": pricing_metadata,
         "providers": {
-            "codex": {"rows": codex_all.rows},
-            "claude": {"rows": claude_all.rows},
-            "pi": {"rows": pi_all.rows},
-            "combined": {"rows": combined_all.rows},
+            "codex": {
+                "rows": codex_all.rows,
+                "activity_rows": activity_rows_from_totals(codex_activity_all),
+            },
+            "claude": {
+                "rows": claude_all.rows,
+                "activity_rows": activity_rows_from_totals(claude_activity_all),
+            },
+            "pi": {
+                "rows": pi_all.rows,
+                "activity_rows": activity_rows_from_totals(pi_activity_all),
+            },
+            "combined": {
+                "rows": combined_all.rows,
+                "activity_rows": activity_rows_from_totals(combined_activity_all),
+            },
         },
     }
 

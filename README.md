@@ -12,6 +12,7 @@ Supports Codex, Claude, and PI Coding Agent.
 - Provider toggle filtered to providers present on the system (`Combined`, `Codex`, `Claude`, `PI`)
 - Range-aware stats cards for total, days, sessions, highest day, explicit input/output/cached token totals, and cost totals
 - Today + calendar-week rollups
+- Activity Rhythm heatmap + time-of-day summary for the selected provider and date range
 - Daily breakdown table with sessions, input, output, cached, total token, and total cost columns
 - Range-scoped breakdown table grouped by `Agent CLI` + `Model`, including cost totals
 - Horizontal bar chart (with rank, total tokens, and session count) above the table

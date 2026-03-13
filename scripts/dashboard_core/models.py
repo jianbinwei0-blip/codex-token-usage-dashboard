@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 
 BreakdownKey = tuple[str, str]
+ActivityKey = tuple[dt.date, int]
 
 
 def round_cost(value: float) -> float:
@@ -29,6 +30,66 @@ class BreakdownTotals:
     @property
     def cost_status(self) -> str:
         return "complete" if self.cost_complete else "partial"
+
+
+@dataclass
+class ActivityTotals:
+    date: dt.date
+    hour: int
+    sessions: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    total_tokens: int = 0
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
+    cached_cost_usd: float = 0.0
+    total_cost_usd: float = 0.0
+    cost_complete: bool = True
+
+    @property
+    def cost_status(self) -> str:
+        return "complete" if self.cost_complete else "partial"
+
+    def add_usage(
+        self,
+        *,
+        sessions: int = 0,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_tokens: int = 0,
+        total_tokens: int = 0,
+        input_cost_usd: float = 0.0,
+        output_cost_usd: float = 0.0,
+        cached_cost_usd: float = 0.0,
+        total_cost_usd: float = 0.0,
+        cost_complete: bool | None = None,
+    ) -> None:
+        self.sessions += sessions
+        self.input_tokens += input_tokens
+        self.output_tokens += output_tokens
+        self.cached_tokens += cached_tokens
+        self.total_tokens += total_tokens
+        self.input_cost_usd = round_cost(self.input_cost_usd + input_cost_usd)
+        self.output_cost_usd = round_cost(self.output_cost_usd + output_cost_usd)
+        self.cached_cost_usd = round_cost(self.cached_cost_usd + cached_cost_usd)
+        self.total_cost_usd = round_cost(self.total_cost_usd + total_cost_usd)
+        if cost_complete is not None:
+            self.cost_complete = self.cost_complete and cost_complete
+
+    def merge_from(self, other: "ActivityTotals") -> None:
+        self.add_usage(
+            sessions=other.sessions,
+            input_tokens=other.input_tokens,
+            output_tokens=other.output_tokens,
+            cached_tokens=other.cached_tokens,
+            total_tokens=other.total_tokens,
+            input_cost_usd=other.input_cost_usd,
+            output_cost_usd=other.output_cost_usd,
+            cached_cost_usd=other.cached_cost_usd,
+            total_cost_usd=other.total_cost_usd,
+            cost_complete=other.cost_complete,
+        )
 
 
 @dataclass

@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from .models import BreakdownTotals, DailyTotals, round_cost
+from .models import ActivityTotals, BreakdownTotals, DailyTotals, round_cost
 
 
 @dataclass
@@ -45,6 +45,29 @@ def serialize_breakdown_rows(breakdowns: dict[tuple[str, str], BreakdownTotals])
     return rows
 
 
+def serialize_activity_rows(activity_totals: dict[tuple[dt.date, int], ActivityTotals]) -> list[dict[str, int | float | str | bool]]:
+    rows = [
+        {
+            "date": activity.date.isoformat(),
+            "hour": activity.hour,
+            "sessions": activity.sessions,
+            "input_tokens": activity.input_tokens,
+            "output_tokens": activity.output_tokens,
+            "cached_tokens": activity.cached_tokens,
+            "total_tokens": activity.total_tokens,
+            "input_cost_usd": activity.input_cost_usd,
+            "output_cost_usd": activity.output_cost_usd,
+            "cached_cost_usd": activity.cached_cost_usd,
+            "total_cost_usd": activity.total_cost_usd,
+            "cost_complete": activity.cost_complete,
+            "cost_status": activity.cost_status,
+        }
+        for activity in activity_totals.values()
+    ]
+    rows.sort(key=lambda row: (str(row["date"]), int(row["hour"])))
+    return rows
+
+
 def combine_daily_totals(*providers: dict[dt.date, DailyTotals]) -> dict[dt.date, DailyTotals]:
     combined: dict[dt.date, DailyTotals] = {}
 
@@ -52,6 +75,17 @@ def combine_daily_totals(*providers: dict[dt.date, DailyTotals]) -> dict[dt.date
         for usage_date, values in provider.items():
             daily = combined.setdefault(usage_date, DailyTotals(date=usage_date))
             daily.merge_from(values)
+
+    return combined
+
+
+def combine_activity_totals(*providers: dict[tuple[dt.date, int], ActivityTotals]) -> dict[tuple[dt.date, int], ActivityTotals]:
+    combined: dict[tuple[dt.date, int], ActivityTotals] = {}
+
+    for provider in providers:
+        for key, values in provider.items():
+            activity = combined.setdefault(key, ActivityTotals(date=values.date, hour=values.hour))
+            activity.merge_from(values)
 
     return combined
 
@@ -191,6 +225,12 @@ def rows_from_daily(
 
 def breakdown_rows_from_daily(daily: dict[dt.date, DailyTotals]) -> list[dict[str, int | float | str | bool]]:
     return materialize_daily(daily, include_breakdown_rows=True).breakdown_rows
+
+
+def activity_rows_from_totals(
+    activity_totals: dict[tuple[dt.date, int], ActivityTotals],
+) -> list[dict[str, int | float | str | bool]]:
+    return serialize_activity_rows(activity_totals)
 
 
 def summary_from_daily(daily: dict[dt.date, DailyTotals]) -> dict[str, int | float | bool | str]:

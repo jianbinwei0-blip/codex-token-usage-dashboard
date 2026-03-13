@@ -3,13 +3,18 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 from pathlib import Path
 
-from .models import DailyTotals
+from .models import ActivityTotals, DailyTotals
 from .pricing import PricingCatalog
 
 
 DEFAULT_MODEL = "unknown"
+LOCAL_TIMEZONE = dt.datetime.now().astimezone().tzinfo or dt.timezone.utc
+CODEX_ROLLOUT_TIMESTAMP_PATTERN = re.compile(
+    r"(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})"
+)
 
 
 def safe_non_negative_int(value: object) -> int:
@@ -22,6 +27,46 @@ def normalized_bucket_value(value: object, fallback: str) -> str:
         if normalized:
             return normalized
     return fallback
+
+
+def parse_timestamp_local(value: object) -> dt.datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+
+    try:
+        parsed = dt.datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+
+    return parsed.astimezone()
+
+
+def parse_codex_rollout_timestamp_local(session_path: Path) -> dt.datetime | None:
+    match = CODEX_ROLLOUT_TIMESTAMP_PATTERN.search(session_path.stem)
+    if not match:
+        return None
+    year, month, day, hour, minute, second = (int(part) for part in match.groups())
+    return dt.datetime(year, month, day, hour, minute, second, tzinfo=LOCAL_TIMEZONE)
+
+
+def codex_usage_date_from_path(session_path: Path, sessions_root: Path) -> dt.date | None:
+    relative = session_path.relative_to(sessions_root).parts
+    if len(relative) < 4:
+        return None
+    try:
+        year = int(relative[0])
+        month = int(relative[1])
+        day = int(relative[2])
+        return dt.date(year, month, day)
+    except ValueError:
+        return None
 
 
 def apply_usage_to_daily(
@@ -65,6 +110,40 @@ def apply_usage_to_daily(
     )
 
 
+def add_usage_to_activity(
+    activity_totals: dict[tuple[dt.date, int], ActivityTotals],
+    timestamp: dt.datetime,
+    *,
+    sessions: int,
+    input_tokens: int,
+    output_tokens: int,
+    cached_tokens: int,
+    total_tokens: int,
+    input_cost_usd: float,
+    output_cost_usd: float,
+    cached_cost_usd: float,
+    total_cost_usd: float,
+    cost_complete: bool,
+) -> None:
+    key = (timestamp.date(), timestamp.hour)
+    activity = activity_totals.get(key)
+    if activity is None:
+        activity = ActivityTotals(date=timestamp.date(), hour=timestamp.hour)
+        activity_totals[key] = activity
+    activity.add_usage(
+        sessions=sessions,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cached_tokens=cached_tokens,
+        total_tokens=total_tokens,
+        input_cost_usd=input_cost_usd,
+        output_cost_usd=output_cost_usd,
+        cached_cost_usd=cached_cost_usd,
+        total_cost_usd=total_cost_usd,
+        cost_complete=cost_complete,
+    )
+
+
 def iter_jsonl_files(root: Path):
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames.sort()
@@ -73,11 +152,12 @@ def iter_jsonl_files(root: Path):
                 yield Path(dirpath) / filename
 
 
-def parse_codex_session_usage(session_path: Path) -> dict[str, int | str] | None:
+def parse_codex_session_usage(session_path: Path) -> dict[str, int | str | dt.datetime] | None:
     latest_usage: dict[str, int] | None = None
     latest_model = DEFAULT_MODEL
     agent_cli = "codex"
     session_id = session_path.stem
+    activity_timestamp = parse_codex_rollout_timestamp_local(session_path)
 
     with session_path.open("r", encoding="utf-8", errors="ignore") as handle:
         for line in handle:
@@ -89,6 +169,10 @@ def parse_codex_session_usage(session_path: Path) -> dict[str, int | str] | None
             except json.JSONDecodeError:
                 continue
 
+            event_timestamp = parse_timestamp_local(event.get("timestamp"))
+            if activity_timestamp is None and event_timestamp is not None:
+                activity_timestamp = event_timestamp
+
             event_type = event.get("type")
 
             if event_type == "session_meta":
@@ -98,6 +182,11 @@ def parse_codex_session_usage(session_path: Path) -> dict[str, int | str] | None
                     agent_cli = normalized_bucket_value(payload.get("originator"), "")
                     if not agent_cli:
                         agent_cli = normalized_bucket_value(payload.get("source"), "codex")
+                    payload_timestamp = parse_timestamp_local(payload.get("timestamp"))
+                    if payload_timestamp is not None:
+                        activity_timestamp = payload_timestamp
+                    elif activity_timestamp is None and event_timestamp is not None:
+                        activity_timestamp = event_timestamp
                 continue
 
             if event_type == "turn_context":
@@ -131,6 +220,9 @@ def parse_codex_session_usage(session_path: Path) -> dict[str, int | str] | None
             if total_tokens == 0 and input_tokens == 0 and cached_tokens == 0 and output_tokens == 0:
                 continue
 
+            if activity_timestamp is None and event_timestamp is not None:
+                activity_timestamp = event_timestamp
+
             latest_usage = {
                 "input_tokens": input_tokens,
                 "cached_tokens": cached_tokens,
@@ -145,36 +237,36 @@ def parse_codex_session_usage(session_path: Path) -> dict[str, int | str] | None
         "session_id": session_id,
         "agent_cli": normalized_bucket_value(agent_cli, "codex"),
         "model": normalized_bucket_value(latest_model, DEFAULT_MODEL),
+        "timestamp": activity_timestamp,
         **latest_usage,
     }
 
 
-def collect_codex_daily_totals(
+def collect_codex_usage_data(
     sessions_root: Path,
     pricing_catalog: PricingCatalog | None = None,
-) -> dict[dt.date, DailyTotals]:
+) -> tuple[dict[dt.date, DailyTotals], dict[tuple[dt.date, int], ActivityTotals]]:
     totals: dict[dt.date, DailyTotals] = {}
+    activity_totals: dict[tuple[dt.date, int], ActivityTotals] = {}
     if not sessions_root.exists():
-        return totals
+        return totals, activity_totals
 
     catalog = pricing_catalog or PricingCatalog.from_file(None)
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
 
     for file_path in iter_jsonl_files(sessions_root):
-        relative = file_path.relative_to(sessions_root).parts
-        if len(relative) < 4:
-            continue
-        try:
-            year = int(relative[0])
-            month = int(relative[1])
-            day = int(relative[2])
-            usage_date = dt.date(year, month, day)
-        except ValueError:
+        fallback_usage_date = codex_usage_date_from_path(file_path, sessions_root)
+        if fallback_usage_date is None:
             continue
 
         usage = parse_codex_session_usage(file_path)
         if usage is None:
             continue
+
+        activity_timestamp = usage.get("timestamp") if isinstance(usage.get("timestamp"), dt.datetime) else None
+        usage_date = activity_timestamp.date() if activity_timestamp is not None else fallback_usage_date
+        if activity_timestamp is None:
+            activity_timestamp = dt.datetime.combine(usage_date, dt.time(hour=0), tzinfo=LOCAL_TIMEZONE)
 
         session_id = normalized_bucket_value(usage.get("session_id"), file_path.stem)
         agent_cli = normalized_bucket_value(usage.get("agent_cli"), "codex")
@@ -208,41 +300,45 @@ def collect_codex_daily_totals(
             cost_complete=priced.cost_complete,
         )
         bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
+        add_usage_to_activity(
+            activity_totals,
+            activity_timestamp,
+            sessions=1,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cached_tokens=cached_tokens,
+            total_tokens=total_tokens,
+            input_cost_usd=priced.input_cost_usd,
+            output_cost_usd=priced.output_cost_usd,
+            cached_cost_usd=priced.cached_cost_usd,
+            total_cost_usd=priced.total_cost_usd,
+            cost_complete=priced.cost_complete,
+        )
 
     for (usage_date, agent_cli, model), sessions in bucket_sessions.items():
         daily = totals.get(usage_date)
         if daily is not None:
             daily.add_breakdown(agent_cli=agent_cli, model=model, sessions=len(sessions))
 
+    return totals, activity_totals
+
+
+def collect_codex_daily_totals(
+    sessions_root: Path,
+    pricing_catalog: PricingCatalog | None = None,
+) -> dict[dt.date, DailyTotals]:
+    totals, _activity_totals = collect_codex_usage_data(sessions_root, pricing_catalog=pricing_catalog)
     return totals
 
 
-def parse_timestamp_local(value: object) -> dt.datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-
-    normalized = value.strip()
-    if normalized.endswith("Z"):
-        normalized = normalized[:-1] + "+00:00"
-
-    try:
-        parsed = dt.datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=dt.timezone.utc)
-
-    return parsed.astimezone()
-
-
-def collect_claude_daily_totals(
+def collect_claude_usage_data(
     claude_projects_root: Path,
     pricing_catalog: PricingCatalog | None = None,
-) -> dict[dt.date, DailyTotals]:
+) -> tuple[dict[dt.date, DailyTotals], dict[tuple[dt.date, int], ActivityTotals]]:
     totals: dict[dt.date, DailyTotals] = {}
+    activity_totals: dict[tuple[dt.date, int], ActivityTotals] = {}
     if not claude_projects_root.exists():
-        return totals
+        return totals, activity_totals
 
     catalog = pricing_catalog or PricingCatalog.from_file(None)
     request_usage: dict[tuple[str, str], dict[str, object]] = {}
@@ -319,6 +415,7 @@ def collect_claude_daily_totals(
 
     daily_sessions: dict[dt.date, set[str]] = {}
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
+    daily_session_usage: dict[tuple[dt.date, str], dict[str, object]] = {}
 
     for request in request_usage.values():
         timestamp = request["timestamp"]
@@ -363,6 +460,33 @@ def collect_claude_daily_totals(
         daily_sessions.setdefault(usage_date, set()).add(session_id)
         bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
 
+        session_key = (usage_date, session_id)
+        session_activity = daily_session_usage.get(session_key)
+        if session_activity is None:
+            daily_session_usage[session_key] = {
+                "timestamp": timestamp,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cached_tokens": cached_tokens,
+                "total_tokens": request_total,
+                "input_cost_usd": priced.input_cost_usd,
+                "output_cost_usd": priced.output_cost_usd,
+                "cached_cost_usd": priced.cached_cost_usd,
+                "total_cost_usd": priced.total_cost_usd,
+                "cost_complete": priced.cost_complete,
+            }
+        else:
+            session_activity["timestamp"] = min(session_activity["timestamp"], timestamp)
+            session_activity["input_tokens"] = safe_non_negative_int(session_activity.get("input_tokens")) + input_tokens
+            session_activity["output_tokens"] = safe_non_negative_int(session_activity.get("output_tokens")) + output_tokens
+            session_activity["cached_tokens"] = safe_non_negative_int(session_activity.get("cached_tokens")) + cached_tokens
+            session_activity["total_tokens"] = safe_non_negative_int(session_activity.get("total_tokens")) + request_total
+            session_activity["input_cost_usd"] = float(session_activity.get("input_cost_usd") or 0.0) + priced.input_cost_usd
+            session_activity["output_cost_usd"] = float(session_activity.get("output_cost_usd") or 0.0) + priced.output_cost_usd
+            session_activity["cached_cost_usd"] = float(session_activity.get("cached_cost_usd") or 0.0) + priced.cached_cost_usd
+            session_activity["total_cost_usd"] = float(session_activity.get("total_cost_usd") or 0.0) + priced.total_cost_usd
+            session_activity["cost_complete"] = bool(session_activity.get("cost_complete", True)) and priced.cost_complete
+
     for usage_date, sessions in daily_sessions.items():
         if usage_date in totals:
             totals[usage_date].sessions = len(sessions)
@@ -372,24 +496,53 @@ def collect_claude_daily_totals(
         if daily is not None:
             daily.add_breakdown(agent_cli=agent_cli, model=model, sessions=len(sessions))
 
+    for session_activity in daily_session_usage.values():
+        timestamp = session_activity.get("timestamp")
+        if not isinstance(timestamp, dt.datetime):
+            continue
+        add_usage_to_activity(
+            activity_totals,
+            timestamp,
+            sessions=1,
+            input_tokens=safe_non_negative_int(session_activity.get("input_tokens")),
+            output_tokens=safe_non_negative_int(session_activity.get("output_tokens")),
+            cached_tokens=safe_non_negative_int(session_activity.get("cached_tokens")),
+            total_tokens=safe_non_negative_int(session_activity.get("total_tokens")),
+            input_cost_usd=float(session_activity.get("input_cost_usd") or 0.0),
+            output_cost_usd=float(session_activity.get("output_cost_usd") or 0.0),
+            cached_cost_usd=float(session_activity.get("cached_cost_usd") or 0.0),
+            total_cost_usd=float(session_activity.get("total_cost_usd") or 0.0),
+            cost_complete=bool(session_activity.get("cost_complete", True)),
+        )
+
+    return totals, activity_totals
+
+
+def collect_claude_daily_totals(
+    claude_projects_root: Path,
+    pricing_catalog: PricingCatalog | None = None,
+) -> dict[dt.date, DailyTotals]:
+    totals, _activity_totals = collect_claude_usage_data(claude_projects_root, pricing_catalog=pricing_catalog)
     return totals
 
 
-def collect_pi_daily_totals(
+def collect_pi_usage_data(
     pi_agent_root: Path,
     pricing_catalog: PricingCatalog | None = None,
-) -> dict[dt.date, DailyTotals]:
+) -> tuple[dict[dt.date, DailyTotals], dict[tuple[dt.date, int], ActivityTotals]]:
     totals: dict[dt.date, DailyTotals] = {}
+    activity_totals: dict[tuple[dt.date, int], ActivityTotals] = {}
     if not pi_agent_root.exists():
-        return totals
+        return totals, activity_totals
 
     sessions_root = pi_agent_root / "sessions"
     if not sessions_root.exists():
-        return totals
+        return totals, activity_totals
 
     catalog = pricing_catalog or PricingCatalog.from_file(None)
     daily_sessions: dict[dt.date, set[str]] = {}
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
+    daily_session_usage: dict[tuple[dt.date, str], dict[str, object]] = {}
 
     for file_path in iter_jsonl_files(sessions_root):
         session_id = file_path.stem
@@ -471,6 +624,33 @@ def collect_pi_daily_totals(
                 daily_sessions.setdefault(usage_date, set()).add(session_id)
                 bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
 
+                session_key = (usage_date, session_id)
+                session_activity = daily_session_usage.get(session_key)
+                if session_activity is None:
+                    daily_session_usage[session_key] = {
+                        "timestamp": local_timestamp,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cached_tokens": cached_tokens,
+                        "total_tokens": total_tokens,
+                        "input_cost_usd": priced.input_cost_usd,
+                        "output_cost_usd": priced.output_cost_usd,
+                        "cached_cost_usd": priced.cached_cost_usd,
+                        "total_cost_usd": priced.total_cost_usd,
+                        "cost_complete": priced.cost_complete,
+                    }
+                else:
+                    session_activity["timestamp"] = min(session_activity["timestamp"], local_timestamp)
+                    session_activity["input_tokens"] = safe_non_negative_int(session_activity.get("input_tokens")) + input_tokens
+                    session_activity["output_tokens"] = safe_non_negative_int(session_activity.get("output_tokens")) + output_tokens
+                    session_activity["cached_tokens"] = safe_non_negative_int(session_activity.get("cached_tokens")) + cached_tokens
+                    session_activity["total_tokens"] = safe_non_negative_int(session_activity.get("total_tokens")) + total_tokens
+                    session_activity["input_cost_usd"] = float(session_activity.get("input_cost_usd") or 0.0) + priced.input_cost_usd
+                    session_activity["output_cost_usd"] = float(session_activity.get("output_cost_usd") or 0.0) + priced.output_cost_usd
+                    session_activity["cached_cost_usd"] = float(session_activity.get("cached_cost_usd") or 0.0) + priced.cached_cost_usd
+                    session_activity["total_cost_usd"] = float(session_activity.get("total_cost_usd") or 0.0) + priced.total_cost_usd
+                    session_activity["cost_complete"] = bool(session_activity.get("cost_complete", True)) and priced.cost_complete
+
     for usage_date, sessions in daily_sessions.items():
         if usage_date in totals:
             totals[usage_date].sessions = len(sessions)
@@ -480,4 +660,31 @@ def collect_pi_daily_totals(
         if daily is not None:
             daily.add_breakdown(agent_cli=agent_cli, model=model, sessions=len(sessions))
 
+    for session_activity in daily_session_usage.values():
+        timestamp = session_activity.get("timestamp")
+        if not isinstance(timestamp, dt.datetime):
+            continue
+        add_usage_to_activity(
+            activity_totals,
+            timestamp,
+            sessions=1,
+            input_tokens=safe_non_negative_int(session_activity.get("input_tokens")),
+            output_tokens=safe_non_negative_int(session_activity.get("output_tokens")),
+            cached_tokens=safe_non_negative_int(session_activity.get("cached_tokens")),
+            total_tokens=safe_non_negative_int(session_activity.get("total_tokens")),
+            input_cost_usd=float(session_activity.get("input_cost_usd") or 0.0),
+            output_cost_usd=float(session_activity.get("output_cost_usd") or 0.0),
+            cached_cost_usd=float(session_activity.get("cached_cost_usd") or 0.0),
+            total_cost_usd=float(session_activity.get("total_cost_usd") or 0.0),
+            cost_complete=bool(session_activity.get("cost_complete", True)),
+        )
+
+    return totals, activity_totals
+
+
+def collect_pi_daily_totals(
+    pi_agent_root: Path,
+    pricing_catalog: PricingCatalog | None = None,
+) -> dict[dt.date, DailyTotals]:
+    totals, _activity_totals = collect_pi_usage_data(pi_agent_root, pricing_catalog=pricing_catalog)
     return totals

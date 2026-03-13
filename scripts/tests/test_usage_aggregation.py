@@ -7,6 +7,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import ai_usage_recalc_server as server
+from dashboard_core.collectors import collect_codex_usage_data
 
 
 class UsageAggregationTests(unittest.TestCase):
@@ -124,6 +125,55 @@ class UsageAggregationTests(unittest.TestCase):
             self.assertEqual(fallback_breakdown.total_tokens, 75)
             self.assertAlmostEqual(fallback_breakdown.total_cost_usd, 0.0)
             self.assertFalse(fallback_breakdown.cost_complete)
+
+    def test_collect_codex_usage_data_tracks_activity_hour_from_session_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            session_file = root / "2026" / "02" / "28" / "session-hour.jsonl"
+            self._write_jsonl(
+                session_file,
+                [
+                    {
+                        "timestamp": "2026-02-28T06:45:00Z",
+                        "type": "session_meta",
+                        "payload": {
+                            "id": "codex-session-hour",
+                            "timestamp": "2026-02-28T06:45:00Z",
+                            "originator": "codex_cli_rs",
+                        },
+                    },
+                    {
+                        "timestamp": "2026-02-28T06:45:02Z",
+                        "type": "turn_context",
+                        "payload": {
+                            "model": "gpt-5.2",
+                        },
+                    },
+                    {
+                        "timestamp": "2026-02-28T06:50:00Z",
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "total_token_usage": {
+                                    "input_tokens": 12,
+                                    "cached_input_tokens": 4,
+                                    "output_tokens": 6,
+                                    "total_tokens": 22,
+                                }
+                            },
+                        },
+                    },
+                ],
+            )
+
+            totals, activity_totals = collect_codex_usage_data(root)
+            local_dt = datetime.fromisoformat("2026-02-28T06:45:00+00:00").astimezone()
+            usage_day = local_dt.date()
+            self.assertIn(usage_day, totals)
+            self.assertIn((usage_day, local_dt.hour), activity_totals)
+            self.assertEqual(activity_totals[(usage_day, local_dt.hour)].sessions, 1)
+            self.assertEqual(activity_totals[(usage_day, local_dt.hour)].total_tokens, 22)
 
     def test_collect_claude_daily_totals_dedupes_by_request_and_keeps_model_cached_breakdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

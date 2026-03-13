@@ -240,6 +240,41 @@ class HarnessContractsTests(unittest.TestCase):
                     },
                 ],
             )
+            self.assertEqual(
+                dataset["providers"]["combined"]["activity_rows"],
+                [
+                    {
+                        "date": claude_day,
+                        "hour": datetime.fromisoformat("2026-03-03T05:00:00+00:00").astimezone().hour,
+                        "sessions": 1,
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "cached_tokens": 5,
+                        "total_tokens": 20,
+                        "input_cost_usd": 0.00003,
+                        "output_cost_usd": 0.000075,
+                        "cached_cost_usd": 0.00001185,
+                        "total_cost_usd": 0.00011685,
+                        "cost_complete": True,
+                        "cost_status": "complete",
+                    },
+                    {
+                        "date": "2026-03-03",
+                        "hour": 0,
+                        "sessions": 1,
+                        "input_tokens": 100,
+                        "output_tokens": 20,
+                        "cached_tokens": 20,
+                        "total_tokens": 120,
+                        "input_cost_usd": 0.00025,
+                        "output_cost_usd": 0.0003,
+                        "cached_cost_usd": 0.000005,
+                        "total_cost_usd": 0.000555,
+                        "cost_complete": True,
+                        "cost_status": "complete",
+                    },
+                ],
+            )
 
     def test_recalc_pipeline_clamps_current_week_end_on_monday(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
