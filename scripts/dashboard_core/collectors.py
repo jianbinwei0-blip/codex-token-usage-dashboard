@@ -15,6 +15,9 @@ LOCAL_TIMEZONE = dt.datetime.now().astimezone().tzinfo or dt.timezone.utc
 CODEX_ROLLOUT_TIMESTAMP_PATTERN = re.compile(
     r"(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})"
 )
+_CODEX_SESSION_USAGE_CACHE: dict[str, tuple[int, int, dict[str, int | str | dt.datetime] | None]] = {}
+_CLAUDE_REQUEST_RECORDS_CACHE: dict[str, tuple[int, int, list[dict[str, object]]]] = {}
+_PI_SESSION_RECORDS_CACHE: dict[str, tuple[int, int, tuple[str, list[dict[str, object]]]]] = {}
 
 
 def safe_non_negative_int(value: object) -> int:
@@ -242,6 +245,23 @@ def parse_codex_session_usage(session_path: Path) -> dict[str, int | str | dt.da
     }
 
 
+def parse_codex_session_usage_cached(session_path: Path) -> dict[str, int | str | dt.datetime] | None:
+    try:
+        stat = session_path.stat()
+    except OSError:
+        return None
+
+    cache_key = str(session_path)
+    cached = _CODEX_SESSION_USAGE_CACHE.get(cache_key)
+    signature = (stat.st_size, stat.st_mtime_ns)
+    if cached is not None and cached[:2] == signature:
+        return cached[2]
+
+    usage = parse_codex_session_usage(session_path)
+    _CODEX_SESSION_USAGE_CACHE[cache_key] = (signature[0], signature[1], usage)
+    return usage
+
+
 def collect_codex_usage_data(
     sessions_root: Path,
     pricing_catalog: PricingCatalog | None = None,
@@ -259,7 +279,7 @@ def collect_codex_usage_data(
         if fallback_usage_date is None:
             continue
 
-        usage = parse_codex_session_usage(file_path)
+        usage = parse_codex_session_usage_cached(file_path)
         if usage is None:
             continue
 
@@ -331,6 +351,81 @@ def collect_codex_daily_totals(
     return totals
 
 
+def parse_claude_request_records(file_path: Path) -> list[dict[str, object]]:
+    session_scope = file_path.stem
+    records: list[dict[str, object]] = []
+
+    with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            request_id = event.get("requestId")
+            if not isinstance(request_id, str) or not request_id:
+                continue
+
+            local_timestamp = parse_timestamp_local(event.get("timestamp"))
+            if local_timestamp is None:
+                continue
+
+            message = event.get("message") or {}
+            if not isinstance(message, dict):
+                continue
+
+            usage = message.get("usage") or {}
+            if not isinstance(usage, dict):
+                continue
+
+            session_id = event.get("sessionId")
+            if not isinstance(session_id, str) or not session_id:
+                session_id = session_scope
+
+            input_tokens = safe_non_negative_int(usage.get("input_tokens"))
+            cache_creation_input_tokens = safe_non_negative_int(usage.get("cache_creation_input_tokens"))
+            cache_read_input_tokens = safe_non_negative_int(usage.get("cache_read_input_tokens"))
+            output_tokens = safe_non_negative_int(usage.get("output_tokens"))
+            cached_tokens = cache_creation_input_tokens + cache_read_input_tokens
+            model = normalized_bucket_value(message.get("model"), DEFAULT_MODEL)
+
+            records.append(
+                {
+                    "session_id": session_id,
+                    "request_id": request_id,
+                    "timestamp": local_timestamp,
+                    "input_tokens": input_tokens,
+                    "cache_creation_input_tokens": cache_creation_input_tokens,
+                    "cache_read_input_tokens": cache_read_input_tokens,
+                    "cached_tokens": cached_tokens,
+                    "output_tokens": output_tokens,
+                    "model": model,
+                }
+            )
+
+    return records
+
+
+def parse_claude_request_records_cached(file_path: Path) -> list[dict[str, object]]:
+    try:
+        stat = file_path.stat()
+    except OSError:
+        return []
+
+    cache_key = str(file_path)
+    cached = _CLAUDE_REQUEST_RECORDS_CACHE.get(cache_key)
+    signature = (stat.st_size, stat.st_mtime_ns)
+    if cached is not None and cached[:2] == signature:
+        return cached[2]
+
+    records = parse_claude_request_records(file_path)
+    _CLAUDE_REQUEST_RECORDS_CACHE[cache_key] = (signature[0], signature[1], records)
+    return records
+
+
 def collect_claude_usage_data(
     claude_projects_root: Path,
     pricing_catalog: PricingCatalog | None = None,
@@ -344,74 +439,52 @@ def collect_claude_usage_data(
     request_usage: dict[tuple[str, str], dict[str, object]] = {}
 
     for file_path in iter_jsonl_files(claude_projects_root):
-        session_scope = file_path.stem
-        with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+        for record in parse_claude_request_records_cached(file_path):
+            session_id = normalized_bucket_value(record.get("session_id"), file_path.stem)
+            request_id = normalized_bucket_value(record.get("request_id"), "")
+            if not request_id:
+                continue
 
-                request_id = event.get("requestId")
-                if not isinstance(request_id, str) or not request_id:
-                    continue
+            dedupe_key = (session_id, request_id)
+            current = request_usage.get(dedupe_key)
+            local_timestamp = record.get("timestamp")
+            if not isinstance(local_timestamp, dt.datetime):
+                continue
 
-                local_timestamp = parse_timestamp_local(event.get("timestamp"))
-                if local_timestamp is None:
-                    continue
+            input_tokens = safe_non_negative_int(record.get("input_tokens"))
+            cache_creation_input_tokens = safe_non_negative_int(record.get("cache_creation_input_tokens"))
+            cache_read_input_tokens = safe_non_negative_int(record.get("cache_read_input_tokens"))
+            cached_tokens = safe_non_negative_int(record.get("cached_tokens"))
+            output_tokens = safe_non_negative_int(record.get("output_tokens"))
+            model = normalized_bucket_value(record.get("model"), DEFAULT_MODEL)
 
-                message = event.get("message") or {}
-                if not isinstance(message, dict):
-                    continue
+            if current is None:
+                request_usage[dedupe_key] = {
+                    "session_id": session_id,
+                    "timestamp": local_timestamp,
+                    "input_tokens": input_tokens,
+                    "cache_creation_input_tokens": cache_creation_input_tokens,
+                    "cache_read_input_tokens": cache_read_input_tokens,
+                    "cached_tokens": cached_tokens,
+                    "output_tokens": output_tokens,
+                    "model": model,
+                }
+                continue
 
-                usage = message.get("usage") or {}
-                if not isinstance(usage, dict):
-                    continue
-
-                session_id = event.get("sessionId")
-                if not isinstance(session_id, str) or not session_id:
-                    session_id = session_scope
-
-                dedupe_key = (session_id, request_id)
-                current = request_usage.get(dedupe_key)
-
-                input_tokens = safe_non_negative_int(usage.get("input_tokens"))
-                cache_creation_input_tokens = safe_non_negative_int(usage.get("cache_creation_input_tokens"))
-                cache_read_input_tokens = safe_non_negative_int(usage.get("cache_read_input_tokens"))
-                output_tokens = safe_non_negative_int(usage.get("output_tokens"))
-                cached_tokens = cache_creation_input_tokens + cache_read_input_tokens
-                model = normalized_bucket_value(message.get("model"), DEFAULT_MODEL)
-
-                if current is None:
-                    request_usage[dedupe_key] = {
-                        "session_id": session_id,
-                        "timestamp": local_timestamp,
-                        "input_tokens": input_tokens,
-                        "cache_creation_input_tokens": cache_creation_input_tokens,
-                        "cache_read_input_tokens": cache_read_input_tokens,
-                        "cached_tokens": cached_tokens,
-                        "output_tokens": output_tokens,
-                        "model": model,
-                    }
-                    continue
-
-                current["timestamp"] = max(current["timestamp"], local_timestamp)
-                current["input_tokens"] = max(safe_non_negative_int(current.get("input_tokens")), input_tokens)
-                current["cache_creation_input_tokens"] = max(
-                    safe_non_negative_int(current.get("cache_creation_input_tokens")),
-                    cache_creation_input_tokens,
-                )
-                current["cache_read_input_tokens"] = max(
-                    safe_non_negative_int(current.get("cache_read_input_tokens")),
-                    cache_read_input_tokens,
-                )
-                current["cached_tokens"] = max(safe_non_negative_int(current.get("cached_tokens")), cached_tokens)
-                current["output_tokens"] = max(safe_non_negative_int(current.get("output_tokens")), output_tokens)
-                if model != DEFAULT_MODEL:
-                    current["model"] = model
+            current["timestamp"] = max(current["timestamp"], local_timestamp)
+            current["input_tokens"] = max(safe_non_negative_int(current.get("input_tokens")), input_tokens)
+            current["cache_creation_input_tokens"] = max(
+                safe_non_negative_int(current.get("cache_creation_input_tokens")),
+                cache_creation_input_tokens,
+            )
+            current["cache_read_input_tokens"] = max(
+                safe_non_negative_int(current.get("cache_read_input_tokens")),
+                cache_read_input_tokens,
+            )
+            current["cached_tokens"] = max(safe_non_negative_int(current.get("cached_tokens")), cached_tokens)
+            current["output_tokens"] = max(safe_non_negative_int(current.get("output_tokens")), output_tokens)
+            if model != DEFAULT_MODEL:
+                current["model"] = model
 
     daily_sessions: dict[dt.date, set[str]] = {}
     bucket_sessions: dict[tuple[dt.date, str, str], set[str]] = {}
@@ -526,6 +599,90 @@ def collect_claude_daily_totals(
     return totals
 
 
+def parse_pi_session_records(file_path: Path) -> tuple[str, list[dict[str, object]]]:
+    session_id = file_path.stem
+    active_model = DEFAULT_MODEL
+    records: list[dict[str, object]] = []
+
+    with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            event_type = event.get("type")
+            if event_type == "session":
+                event_session_id = event.get("id")
+                if isinstance(event_session_id, str) and event_session_id:
+                    session_id = event_session_id
+                continue
+
+            if event_type == "model_change":
+                active_model = normalized_bucket_value(event.get("modelId"), active_model)
+                continue
+
+            if event_type != "message":
+                continue
+
+            local_timestamp = parse_timestamp_local(event.get("timestamp"))
+            if local_timestamp is None:
+                continue
+
+            message = event.get("message") or {}
+            if not isinstance(message, dict) or message.get("role") != "assistant":
+                continue
+
+            usage = message.get("usage") or {}
+            if not isinstance(usage, dict):
+                continue
+
+            input_tokens = safe_non_negative_int(usage.get("input"))
+            output_tokens = safe_non_negative_int(usage.get("output"))
+            cache_read_tokens = safe_non_negative_int(usage.get("cacheRead"))
+            cache_write_tokens = safe_non_negative_int(usage.get("cacheWrite"))
+            cached_tokens = cache_read_tokens + cache_write_tokens
+            total_tokens = safe_non_negative_int(usage.get("totalTokens"))
+            if total_tokens == 0 and (input_tokens or output_tokens or cached_tokens):
+                total_tokens = input_tokens + output_tokens + cached_tokens
+
+            records.append(
+                {
+                    "timestamp": local_timestamp,
+                    "model": normalized_bucket_value(message.get("model"), active_model),
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cache_read_tokens": cache_read_tokens,
+                    "cache_write_tokens": cache_write_tokens,
+                    "cached_tokens": cached_tokens,
+                    "total_tokens": total_tokens,
+                    "native_cost": usage.get("cost") if isinstance(usage.get("cost"), dict) else None,
+                }
+            )
+
+    return session_id, records
+
+
+def parse_pi_session_records_cached(file_path: Path) -> tuple[str, list[dict[str, object]]]:
+    try:
+        stat = file_path.stat()
+    except OSError:
+        return file_path.stem, []
+
+    cache_key = str(file_path)
+    cached = _PI_SESSION_RECORDS_CACHE.get(cache_key)
+    signature = (stat.st_size, stat.st_mtime_ns)
+    if cached is not None and cached[:2] == signature:
+        return cached[2]
+
+    records = parse_pi_session_records(file_path)
+    _PI_SESSION_RECORDS_CACHE[cache_key] = (signature[0], signature[1], records)
+    return records
+
+
 def collect_pi_usage_data(
     pi_agent_root: Path,
     pricing_catalog: PricingCatalog | None = None,
@@ -545,111 +702,76 @@ def collect_pi_usage_data(
     daily_session_usage: dict[tuple[dt.date, str], dict[str, object]] = {}
 
     for file_path in iter_jsonl_files(sessions_root):
-        session_id = file_path.stem
-        active_model = DEFAULT_MODEL
-        with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+        session_id, records = parse_pi_session_records_cached(file_path)
+        for record in records:
+            local_timestamp = record.get("timestamp")
+            if not isinstance(local_timestamp, dt.datetime):
+                continue
 
-                event_type = event.get("type")
-                if event_type == "session":
-                    event_session_id = event.get("id")
-                    if isinstance(event_session_id, str) and event_session_id:
-                        session_id = event_session_id
-                    continue
+            usage_date = local_timestamp.date()
+            input_tokens = safe_non_negative_int(record.get("input_tokens"))
+            output_tokens = safe_non_negative_int(record.get("output_tokens"))
+            cache_read_tokens = safe_non_negative_int(record.get("cache_read_tokens"))
+            cache_write_tokens = safe_non_negative_int(record.get("cache_write_tokens"))
+            cached_tokens = safe_non_negative_int(record.get("cached_tokens"))
+            total_tokens = safe_non_negative_int(record.get("total_tokens"))
+            native_cost = record.get("native_cost") if isinstance(record.get("native_cost"), dict) else None
+            model = normalized_bucket_value(record.get("model"), DEFAULT_MODEL)
+            priced = catalog.price_usage(
+                "pi",
+                model,
+                uncached_input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
+                native_cost=native_cost,
+            )
 
-                if event_type == "model_change":
-                    active_model = normalized_bucket_value(event.get("modelId"), active_model)
-                    continue
+            daily = totals.setdefault(usage_date, DailyTotals(date=usage_date))
+            agent_cli = "pi"
+            apply_usage_to_daily(
+                daily,
+                agent_cli=agent_cli,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_tokens=cached_tokens,
+                total_tokens=total_tokens,
+                input_cost_usd=priced.input_cost_usd,
+                output_cost_usd=priced.output_cost_usd,
+                cached_cost_usd=priced.cached_cost_usd,
+                total_cost_usd=priced.total_cost_usd,
+                cost_complete=priced.cost_complete,
+            )
+            daily_sessions.setdefault(usage_date, set()).add(session_id)
+            bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
 
-                if event_type != "message":
-                    continue
-
-                local_timestamp = parse_timestamp_local(event.get("timestamp"))
-                if local_timestamp is None:
-                    continue
-
-                message = event.get("message") or {}
-                if not isinstance(message, dict) or message.get("role") != "assistant":
-                    continue
-
-                usage = message.get("usage") or {}
-                if not isinstance(usage, dict):
-                    continue
-
-                usage_date = local_timestamp.date()
-                input_tokens = safe_non_negative_int(usage.get("input"))
-                output_tokens = safe_non_negative_int(usage.get("output"))
-                cache_read_tokens = safe_non_negative_int(usage.get("cacheRead"))
-                cache_write_tokens = safe_non_negative_int(usage.get("cacheWrite"))
-                cached_tokens = cache_read_tokens + cache_write_tokens
-                total_tokens = safe_non_negative_int(usage.get("totalTokens"))
-                if total_tokens == 0 and (input_tokens or output_tokens or cached_tokens):
-                    total_tokens = input_tokens + output_tokens + cached_tokens
-
-                native_cost = usage.get("cost") if isinstance(usage.get("cost"), dict) else None
-                model = normalized_bucket_value(message.get("model"), active_model)
-                priced = catalog.price_usage(
-                    "pi",
-                    model,
-                    uncached_input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cache_read_tokens=cache_read_tokens,
-                    cache_write_tokens=cache_write_tokens,
-                    native_cost=native_cost,
-                )
-
-                daily = totals.setdefault(usage_date, DailyTotals(date=usage_date))
-                agent_cli = "pi"
-                apply_usage_to_daily(
-                    daily,
-                    agent_cli=agent_cli,
-                    model=model,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cached_tokens=cached_tokens,
-                    total_tokens=total_tokens,
-                    input_cost_usd=priced.input_cost_usd,
-                    output_cost_usd=priced.output_cost_usd,
-                    cached_cost_usd=priced.cached_cost_usd,
-                    total_cost_usd=priced.total_cost_usd,
-                    cost_complete=priced.cost_complete,
-                )
-                daily_sessions.setdefault(usage_date, set()).add(session_id)
-                bucket_sessions.setdefault((usage_date, agent_cli, model), set()).add(session_id)
-
-                session_key = (usage_date, session_id)
-                session_activity = daily_session_usage.get(session_key)
-                if session_activity is None:
-                    daily_session_usage[session_key] = {
-                        "timestamp": local_timestamp,
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "cached_tokens": cached_tokens,
-                        "total_tokens": total_tokens,
-                        "input_cost_usd": priced.input_cost_usd,
-                        "output_cost_usd": priced.output_cost_usd,
-                        "cached_cost_usd": priced.cached_cost_usd,
-                        "total_cost_usd": priced.total_cost_usd,
-                        "cost_complete": priced.cost_complete,
-                    }
-                else:
-                    session_activity["timestamp"] = min(session_activity["timestamp"], local_timestamp)
-                    session_activity["input_tokens"] = safe_non_negative_int(session_activity.get("input_tokens")) + input_tokens
-                    session_activity["output_tokens"] = safe_non_negative_int(session_activity.get("output_tokens")) + output_tokens
-                    session_activity["cached_tokens"] = safe_non_negative_int(session_activity.get("cached_tokens")) + cached_tokens
-                    session_activity["total_tokens"] = safe_non_negative_int(session_activity.get("total_tokens")) + total_tokens
-                    session_activity["input_cost_usd"] = float(session_activity.get("input_cost_usd") or 0.0) + priced.input_cost_usd
-                    session_activity["output_cost_usd"] = float(session_activity.get("output_cost_usd") or 0.0) + priced.output_cost_usd
-                    session_activity["cached_cost_usd"] = float(session_activity.get("cached_cost_usd") or 0.0) + priced.cached_cost_usd
-                    session_activity["total_cost_usd"] = float(session_activity.get("total_cost_usd") or 0.0) + priced.total_cost_usd
-                    session_activity["cost_complete"] = bool(session_activity.get("cost_complete", True)) and priced.cost_complete
+            session_key = (usage_date, session_id)
+            session_activity = daily_session_usage.get(session_key)
+            if session_activity is None:
+                daily_session_usage[session_key] = {
+                    "timestamp": local_timestamp,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cached_tokens": cached_tokens,
+                    "total_tokens": total_tokens,
+                    "input_cost_usd": priced.input_cost_usd,
+                    "output_cost_usd": priced.output_cost_usd,
+                    "cached_cost_usd": priced.cached_cost_usd,
+                    "total_cost_usd": priced.total_cost_usd,
+                    "cost_complete": priced.cost_complete,
+                }
+            else:
+                session_activity["timestamp"] = min(session_activity["timestamp"], local_timestamp)
+                session_activity["input_tokens"] = safe_non_negative_int(session_activity.get("input_tokens")) + input_tokens
+                session_activity["output_tokens"] = safe_non_negative_int(session_activity.get("output_tokens")) + output_tokens
+                session_activity["cached_tokens"] = safe_non_negative_int(session_activity.get("cached_tokens")) + cached_tokens
+                session_activity["total_tokens"] = safe_non_negative_int(session_activity.get("total_tokens")) + total_tokens
+                session_activity["input_cost_usd"] = float(session_activity.get("input_cost_usd") or 0.0) + priced.input_cost_usd
+                session_activity["output_cost_usd"] = float(session_activity.get("output_cost_usd") or 0.0) + priced.output_cost_usd
+                session_activity["cached_cost_usd"] = float(session_activity.get("cached_cost_usd") or 0.0) + priced.cached_cost_usd
+                session_activity["total_cost_usd"] = float(session_activity.get("total_cost_usd") or 0.0) + priced.total_cost_usd
+                session_activity["cost_complete"] = bool(session_activity.get("cost_complete", True)) and priced.cost_complete
 
     for usage_date, sessions in daily_sessions.items():
         if usage_date in totals:
