@@ -150,15 +150,19 @@
 
     .hero {
       display: grid;
-      gap: 1rem;
-      padding: 1.4rem 1.45rem 1.35rem;
+      gap: 1.35rem;
+      padding: 1.8rem 1.8rem 1.55rem;
       border-radius: 2.2rem;
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.025)),
+        radial-gradient(120% 140% at 0% 0%, rgba(122, 255, 191, 0.08), transparent 48%),
+        linear-gradient(180deg, rgba(15, 26, 37, 0.86), rgba(8, 15, 22, 0.68));
     }
 
     .hero-copy {
       display: grid;
-      gap: 0.5rem;
-      max-width: 68rem;
+      gap: 0.8rem;
+      max-width: 52rem;
       position: relative;
       z-index: 1;
     }
@@ -168,15 +172,15 @@
       align-items: center;
       gap: 0.55rem;
       width: fit-content;
-      padding: 0.42rem 0.8rem;
+      padding: 0.46rem 0.9rem;
       border-radius: 999px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      color: var(--accent);
-      font-size: 0.73rem;
-      letter-spacing: 0.18em;
+      background: linear-gradient(180deg, rgba(122, 255, 191, 0.12), rgba(255, 255, 255, 0.04));
+      border: 1px solid rgba(122, 255, 191, 0.18);
+      color: color-mix(in srgb, var(--accent) 82%, white);
+      font-size: 0.69rem;
+      letter-spacing: 0.2em;
       text-transform: uppercase;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 10px 24px rgba(0, 0, 0, 0.16);
     }
 
     .hero-eyebrow::before {
@@ -191,50 +195,54 @@
     .hero h1 {
       margin: 0;
       font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-size: clamp(2.25rem, 5vw, 4.5rem);
-      line-height: 0.95;
+      font-size: clamp(2.4rem, 5vw, 4.4rem);
+      line-height: 0.98;
       font-weight: 650;
-      letter-spacing: -0.04em;
+      letter-spacing: -0.05em;
       text-wrap: balance;
       text-shadow: 0 0 26px rgba(255, 255, 255, 0.08);
     }
 
     .hero p {
       margin: 0;
-      max-width: 48rem;
-      color: var(--text-dim);
+      max-width: 42rem;
+      color: rgba(214, 227, 243, 0.78);
       font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-size: clamp(0.98rem, 1.8vw, 1.16rem);
-      line-height: 1.45;
+      font-size: clamp(1rem, 1.75vw, 1.1rem);
+      line-height: 1.6;
       letter-spacing: 0.01em;
     }
 
     .meta {
-      margin-top: 0.25rem;
+      margin-top: 0.1rem;
       font-size: 0.8rem;
       color: var(--text-dim);
       display: grid;
-      gap: 0.65rem;
+      gap: 0.8rem;
       position: relative;
       z-index: 1;
+      padding-top: 0.15rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
     }
 
     .meta-row {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.75rem;
+      gap: 0.7rem;
+      align-items: center;
     }
 
     .meta .chip {
-      background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03));
+      border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 999px;
-      padding: 0.5rem 0.9rem;
+      padding: 0.58rem 0.95rem;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
       max-width: 100%;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.02);
+      color: rgba(232, 242, 252, 0.84);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 22px rgba(0, 0, 0, 0.14);
       backdrop-filter: blur(16px) saturate(130%);
       -webkit-backdrop-filter: blur(16px) saturate(130%);
     }
@@ -622,7 +630,11 @@
     }
 
     .range-panel {
-      padding-block: 1.15rem;
+      padding: 1.15rem;
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.02)),
+        radial-gradient(120% 120% at 100% 0%, rgba(122, 211, 255, 0.08), transparent 52%),
+        linear-gradient(180deg, rgba(13, 23, 34, 0.84), rgba(8, 15, 22, 0.68));
     }
 
     .usage-chart {
@@ -652,13 +664,36 @@
 
     .range-panel .usage-chart-head {
       align-items: flex-start;
+      gap: 1rem 1.25rem;
+      padding: 0.3rem;
+    }
+
+    .range-panel-heading {
+      display: grid;
+      gap: 0.35rem;
+      max-width: 26rem;
+    }
+
+    .range-panel-note {
+      margin: 0;
+      color: rgba(214, 227, 243, 0.66);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 0.92rem;
+      line-height: 1.5;
     }
 
     .range-panel .usage-chart-controls {
       justify-content: flex-start;
       width: 100%;
-      gap: 0.8rem;
+      gap: 0.9rem;
       align-items: stretch;
+      padding: 0.8rem;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 1.7rem;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02)),
+        linear-gradient(180deg, rgba(10, 18, 27, 0.72), rgba(9, 15, 22, 0.54));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
     }
 
     .usage-chart-controls {
@@ -701,15 +736,18 @@
     .range-panel .usage-chart-control-group {
       flex: 1 1 13rem;
       min-width: min(100%, 13rem);
-      min-height: 5.05rem;
+      min-height: 4.9rem;
       align-self: stretch;
-      padding: 0.78rem 0.85rem;
-      border: 1px solid rgba(255, 255, 255, 0.11);
-      border-radius: 1.4rem;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.55rem;
+      padding: 0.88rem 0.92rem;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      border-radius: 1.35rem;
       background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03)),
-        linear-gradient(180deg, rgba(24, 37, 52, 0.82), rgba(15, 24, 34, 0.62));
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.02);
+        linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)),
+        linear-gradient(180deg, rgba(18, 29, 41, 0.78), rgba(12, 20, 29, 0.58));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 26px rgba(0, 0, 0, 0.12);
       backdrop-filter: blur(18px) saturate(130%);
       -webkit-backdrop-filter: blur(18px) saturate(130%);
     }
@@ -725,11 +763,11 @@
     }
 
     .range-panel .usage-chart-control-group label {
-      min-width: 4rem;
-      font-size: 0.72rem;
-      letter-spacing: 0.16em;
-      color: var(--text-soft);
-      font-weight: 600;
+      min-width: 0;
+      font-size: 0.68rem;
+      letter-spacing: 0.18em;
+      color: rgba(189, 204, 221, 0.72);
+      font-weight: 700;
     }
 
     .range-panel .usage-chart-control-group--to {
@@ -741,7 +779,7 @@
       flex: 0 0 auto;
       min-width: 7.5rem;
       justify-content: center;
-      padding-inline: 0.55rem;
+      padding-inline: 0.7rem;
     }
 
     .range-panel .usage-chart-control-group select,
@@ -1323,6 +1361,27 @@
         margin: 0.75rem auto 1.8rem;
       }
 
+      .hero {
+        padding: 1.45rem 1.2rem 1.25rem;
+        gap: 1.1rem;
+      }
+
+      .hero-copy {
+        gap: 0.7rem;
+      }
+
+      .meta {
+        gap: 0.65rem;
+      }
+
+      .range-panel .usage-chart-head {
+        padding: 0;
+      }
+
+      .range-panel .usage-chart-controls {
+        padding: 0.7rem;
+      }
+
       .usage-chart-summary {
         grid-template-columns: 1fr;
       }
@@ -1362,6 +1421,7 @@
       <div class="hero-copy">
         <span class="hero-eyebrow">Local telemetry cockpit</span>
         <h1>AI Token Usage Dashboard</h1>
+        <p>Monitor local AI usage across providers with a calmer top-level snapshot before diving into the detailed daily breakdowns below.</p>
       </div>
       <div class="meta">
         <div class="meta-row">
@@ -1412,7 +1472,10 @@
 
     <section class="panel range-panel">
       <div class="usage-chart-head">
-        <h2 class="usage-chart-title">Time Range</h2>
+        <div class="range-panel-heading">
+          <h2 class="usage-chart-title">Time Range</h2>
+          <p class="range-panel-note">Refine the provider and date window without changing the rest of the dashboard behavior.</p>
+        </div>
         <div class="usage-chart-controls">
           <div class="usage-chart-control-group">
             <label for="usageProvider">Provider</label>
